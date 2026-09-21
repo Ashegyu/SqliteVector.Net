@@ -13,18 +13,21 @@ using SqliteVector.Net.Storage;
 /// </summary>
 public sealed unsafe class MemoryMappedSearchEngine : IDisposable
 {
+    public string FilePath { get; }
+    public SegmentHeader Header { get; }
+    public unsafe RecordDirectoryEntry* DirectoryPtr { get; }
+
     private readonly MemoryMappedFile _mmf;
     private readonly MemoryMappedViewAccessor _accessor;
     private readonly byte* _basePointer;
     
-    private readonly SegmentHeader _header;
-    private readonly RecordDirectoryEntry* _directoryPtr;
     private readonly VectorMetric _metric;
 
     private readonly bool _isNormalized;
 
     public MemoryMappedSearchEngine(string filePath, VectorMetric metric, bool isNormalized = false)
     {
+        FilePath = filePath;
         _metric = metric;
         _isNormalized = isNormalized;
         
@@ -40,29 +43,29 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
         _basePointer = ptr;
 
         // 3. 헤더 읽기 및 강력한 검증 (Unsafe 메모리 접근 전 필수)
-        _header = MemoryMarshal.Read<SegmentHeader>(new ReadOnlySpan<byte>(_basePointer, Marshal.SizeOf<SegmentHeader>()));
+        Header = MemoryMarshal.Read<SegmentHeader>(new ReadOnlySpan<byte>(_basePointer, Marshal.SizeOf<SegmentHeader>()));
 
-        if (_header.Magic != SegmentHeader.MagicNumber)
+        if (Header.Magic != SegmentHeader.MagicNumber)
             throw new InvalidDataException("Invalid Segment Magic Number");
             
         // G4: Unsafe MMap Validation
-        if (_header.FormatVersion != 2)
-            throw new InvalidDataException($"Unsupported FormatVersion: {_header.FormatVersion}");
-        if (_header.Dimensions <= 0)
-            throw new InvalidDataException($"Invalid Dimensions: {_header.Dimensions}");
-        if (_header.PayloadBytes != _header.Dimensions * 4)
-            throw new InvalidDataException($"Invalid PayloadBytes: {_header.PayloadBytes}");
-        if (_header.VectorStride < _header.PayloadBytes || _header.VectorStride % 64 != 0)
-            throw new InvalidDataException($"Invalid VectorStride: {_header.VectorStride}");
-        if (_header.DirectoryOffset < 128)
-            throw new InvalidDataException($"Invalid DirectoryOffset: {_header.DirectoryOffset}");
+        if (Header.FormatVersion != 2)
+            throw new InvalidDataException($"Unsupported FormatVersion: {Header.FormatVersion}");
+        if (Header.Dimensions <= 0)
+            throw new InvalidDataException($"Invalid Dimensions: {Header.Dimensions}");
+        if (Header.PayloadBytes != Header.Dimensions * 4)
+            throw new InvalidDataException($"Invalid PayloadBytes: {Header.PayloadBytes}");
+        if (Header.VectorStride < Header.PayloadBytes || Header.VectorStride % 64 != 0)
+            throw new InvalidDataException($"Invalid VectorStride: {Header.VectorStride}");
+        if (Header.DirectoryOffset < 128)
+            throw new InvalidDataException($"Invalid DirectoryOffset: {Header.DirectoryOffset}");
             
-        long expectedMinSize = _header.VectorRegionOffset + ((long)_header.Capacity * _header.VectorStride);
+        long expectedMinSize = Header.VectorRegionOffset + ((long)Header.Capacity * Header.VectorStride);
         if (_accessor.Capacity < expectedMinSize)
             throw new InvalidDataException($"MMap capacity ({_accessor.Capacity}) is smaller than expected size ({expectedMinSize})");
 
         // 4. 디렉터리 포인터 캐싱 (Zero-Copy)
-        _directoryPtr = (RecordDirectoryEntry*)(_basePointer + _header.DirectoryOffset);
+        DirectoryPtr = (RecordDirectoryEntry*)(_basePointer + Header.DirectoryOffset);
     }
 
     /// <summary>
@@ -71,10 +74,10 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
     /// </summary>
     public void Search(ReadOnlySpan<float> query, DenseTopKBuffer buffer, System.Collections.BitArray? liveSet = null)
     {
-        int dimensions = _header.Dimensions;
-        long regionOffset = _header.VectorRegionOffset;
-        long stride = _header.VectorStride;
-        int capacity = _header.Capacity;
+        int dimensions = Header.Dimensions;
+        long regionOffset = Header.VectorRegionOffset;
+        long stride = Header.VectorStride;
+        int capacity = Header.Capacity;
         
         for (int i = 0; i < capacity; i++)
         {
@@ -82,7 +85,7 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
             if (liveSet != null && !liveSet.Get(i)) continue;
             
             // 만약 LiveSet이 없는 경우(V1 하위호환) 물리적 커밋 여부만 확인
-            if (liveSet == null && _directoryPtr[i].Flags != RecordFlags.Committed) continue;
+            if (liveSet == null && DirectoryPtr[i].Flags != RecordFlags.Committed) continue;
 
             // 벡터의 물리적 주소 계산
             byte* vectorPtr = _basePointer + regionOffset + (i * stride);
@@ -107,10 +110,10 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
     /// </summary>
     public void SearchParallel(ReadOnlySpan<float> query, DenseTopKBuffer globalBuffer, System.Collections.BitArray? liveSet = null)
     {
-        int capacity = _header.Capacity;
-        int dimensions = _header.Dimensions;
-        long regionOffset = _header.VectorRegionOffset;
-        long stride = _header.VectorStride;
+        int capacity = Header.Capacity;
+        int dimensions = Header.Dimensions;
+        long regionOffset = Header.VectorRegionOffset;
+        long stride = Header.VectorStride;
         int topK = globalBuffer.Capacity;
         
         float[] queryArray = query.ToArray();
@@ -128,7 +131,7 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
                 for (int i = range.Item1; i < range.Item2; i++)
                 {
                     if (liveSet != null && !liveSet.Get(i)) continue;
-                    if (liveSet == null && _directoryPtr[i].Flags != RecordFlags.Committed) continue;
+                    if (liveSet == null && DirectoryPtr[i].Flags != RecordFlags.Committed) continue;
 
                     byte* vectorPtr = _basePointer + regionOffset + (i * stride);
                     ReadOnlySpan<float> target = new ReadOnlySpan<float>(vectorPtr, dimensions);
@@ -159,13 +162,36 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
         );
     }
 
+    private int _refCount = 1;
+
+    public bool TryAddReference()
+    {
+        while (true)
+        {
+            int current = _refCount;
+            if (current == 0) return false;
+            
+            if (Interlocked.CompareExchange(ref _refCount, current + 1, current) == current)
+                return true;
+        }
+    }
+
+    public void Release()
+    {
+        if (Interlocked.Decrement(ref _refCount) == 0)
+        {
+            if (_basePointer != null)
+            {
+                _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
+            }
+            _accessor.Dispose();
+            _mmf.Dispose();
+        }
+    }
+
     public void Dispose()
     {
-        if (_basePointer != null)
-        {
-            _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
-        }
-        _accessor.Dispose();
-        _mmf.Dispose();
+        Release();
     }
 }
+

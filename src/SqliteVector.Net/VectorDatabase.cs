@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using SqliteVector.Net.Catalog;
 using SqliteVector.Net.Storage;
 using SqliteVector.Net.Search;
+using SqliteVector.Net.Runtime;
 
 public class VectorDatabaseOptions
 {
@@ -18,25 +19,26 @@ public class VectorSearchOptions
 {
     public int TopK { get; set; } = 10;
     public bool UseParallelSearch { get; set; } = false;
+    public bool UseStreamingSearch { get; set; } = false;
 }
 
 /// <summary>
 /// 71~75항: VectorDatabase Facade
-/// 복잡한 백엔드 스토리지를 캡슐화하고 사용자를 위한 깔끔한 진입점을 제공합니다.
 /// </summary>
 public sealed class VectorDatabase : IAsyncDisposable
 {
     private readonly SqliteCatalog _catalog;
     private readonly ActiveSegmentWriter _writer;
-    private readonly MemoryMappedSearchEngine _searchEngine;
     private readonly VectorDatabaseOptions _options;
     private readonly object _syncRoot = new();
 
-    private VectorDatabase(SqliteCatalog catalog, ActiveSegmentWriter writer, MemoryMappedSearchEngine searchEngine, VectorDatabaseOptions options)
+    private volatile SearchSnapshot _currentSnapshot = null!;
+
+    private VectorDatabase(SqliteCatalog catalog, ActiveSegmentWriter writer, SearchSnapshot initialSnapshot, VectorDatabaseOptions options)
     {
         _catalog = catalog;
         _writer = writer;
-        _searchEngine = searchEngine;
+        _currentSnapshot = initialSnapshot;
         _options = options;
     }
 
@@ -44,22 +46,19 @@ public sealed class VectorDatabase : IAsyncDisposable
     {
         Directory.CreateDirectory(directoryPath);
         string dbPath = Path.Combine(directoryPath, "knowledge.db");
-        string vecPath = Path.Combine(directoryPath, "segment_000001.vec"); // 초기 단일 세그먼트 고정
+        string vecPath = Path.Combine(directoryPath, "segment_000001.vec");
 
         var catalog = new SqliteCatalog(dbPath);
         
-        // G1: Store Contract Validation
         string? storedDim = catalog.GetStoreInfo("Dimensions");
         if (storedDim == null)
         {
-            // 신규 DB: Contract 저장
             catalog.SetStoreInfo("Dimensions", options.Dimensions.ToString());
             catalog.SetStoreInfo("Metric", options.Metric.ToString());
             catalog.SetStoreInfo("NormalizeVectors", options.NormalizeVectors.ToString());
         }
         else
         {
-            // 기존 DB: Contract 검증
             if (int.Parse(storedDim) != options.Dimensions)
                 throw new InvalidOperationException($"StoreContract Mismatch: 기존 Dimensions({storedDim})가 요청된 Dimensions({options.Dimensions})와 다릅니다.");
             
@@ -68,17 +67,18 @@ public sealed class VectorDatabase : IAsyncDisposable
                 throw new InvalidOperationException($"StoreContract Mismatch: 기존 Metric({storedMetric})이 요청된 Metric({options.Metric})과 다릅니다.");
         }
 
-        // V2.0 하드코딩 레이아웃 설정
         var header = new SegmentHeader(1, 1, options.Dimensions, VectorElementType.Float32, capacity: 100000, alignment: 64);
         var writer = new ActiveSegmentWriter(vecPath, header);
         var searchEngine = new MemoryMappedSearchEngine(vecPath, options.Metric, options.NormalizeVectors);
+        
+        var initialLiveSet = catalog.GetLiveSet(segmentId: 1, capacity: 100000);
+        var initialSnapshot = new SearchSnapshot(1, searchEngine, initialLiveSet);
 
-        return await Task.FromResult(new VectorDatabase(catalog, writer, searchEngine, options));
+        return await Task.FromResult(new VectorDatabase(catalog, writer, initialSnapshot, options));
     }
 
     public async Task UpsertAsync(string id, ReadOnlyMemory<float> vector, string? metadata = null)
     {
-        // 48항: Normalize on write (계약 준수)
         float[]? normalizedArray = null;
         ReadOnlySpan<float> span = vector.Span;
         
@@ -92,13 +92,13 @@ public sealed class VectorDatabase : IAsyncDisposable
 
         lock (_syncRoot)
         {
-            // 1. 디스크에 Append 후 Flush (AppendVector 내에서 NaN 체크)
             int recordIndex = _writer.AppendVector(span, generation: 1);
             
-            // 2. SQLite 트랜잭션 커밋 (Atomic Update)
             using var tx = _catalog.BeginTransaction();
             _catalog.UpsertVectorLocation(tx, id, 1, 1, recordIndex, metadata);
             tx.Commit();
+            
+            RefreshSnapshot();
         }
 
         await Task.CompletedTask;
@@ -111,49 +111,80 @@ public sealed class VectorDatabase : IAsyncDisposable
             using var tx = _catalog.BeginTransaction();
             _catalog.DeleteVectorLocation(tx, id);
             tx.Commit();
+            
+            RefreshSnapshot();
         }
         await Task.CompletedTask;
+    }
+
+    private void RefreshSnapshot()
+    {
+        var newLiveSet = _catalog.GetLiveSet(segmentId: 1, capacity: 100000);
+        var engine = _currentSnapshot.MMapEngine;
+        engine.TryAddReference(); // 새로운 스냅샷이 엔진을 참조함
+        
+        var newSnapshot = new SearchSnapshot(1, engine, newLiveSet);
+        var oldSnapshot = _currentSnapshot;
+        _currentSnapshot = newSnapshot;
+        
+        oldSnapshot.Retire();
     }
 
     public async Task<VectorSearchResult[]> SearchAsync(ReadOnlyMemory<float> query, VectorSearchOptions searchOptions)
     {
         var buffer = new DenseTopKBuffer(searchOptions.TopK);
-        System.Collections.BitArray liveSet;
+        SearchSnapshot snapshot;
 
-        // G7.1 & G8: 검색 시점의 논리적 스냅샷(LiveSet) 캡처
-        lock (_syncRoot)
+        do
         {
-            liveSet = _catalog.GetLiveSet(segmentId: 1, capacity: 100000);
-        }
+            snapshot = _currentSnapshot;
+        } 
+        while (!snapshot.TryAddReference());
 
-        // 1. Mmap SIMD 스캔 (Lock-free 병렬 스캔, Stale record는 LiveSet에 의해 완벽 차단됨)
-        if (searchOptions.UseParallelSearch)
+        try
         {
-            _searchEngine.SearchParallel(query.Span, buffer, liveSet);
-        }
-        else
-        {
-            _searchEngine.Search(query.Span, buffer, liveSet);
-        }
-        
-        var rawResults = buffer.GetSortedResults(); // 반환 타입: Candidate[]
-        var finalResults = new VectorSearchResult[rawResults.Length];
+            if (searchOptions.UseStreamingSearch)
+            {
+                unsafe
+                {
+                    var streamingSearch = new StreamingExactSearch(
+                        snapshot.MMapEngine.FilePath, 
+                        snapshot.MMapEngine.Header, 
+                        snapshot.MMapEngine.DirectoryPtr, 
+                        _options.Metric);
+                        
+                    streamingSearch.Search(query.Span, buffer, snapshot.LiveSet);
+                }
+            }
+            else if (searchOptions.UseParallelSearch)
+            {
+                snapshot.MMapEngine.SearchParallel(query.Span, buffer, snapshot.LiveSet);
+            }
+            else
+            {
+                snapshot.MMapEngine.Search(query.Span, buffer, snapshot.LiveSet);
+            }
+            
+            var rawResults = buffer.GetSortedResults();
+            var finalResults = new VectorSearchResult[rawResults.Length];
 
-        // 2. 53항: Metadata Resolve (O(K))
-        // SQLite 조회를 루프당 1회씩 10번(Top-K)만 수행합니다. 문자열 생성도 이 단계에서만 발생합니다.
-        for (int i = 0; i < rawResults.Length; i++)
-        {
-            var (externalId, metadata) = _catalog.ResolveMetadata(segmentId: rawResults[i].SegmentId, recordIndex: rawResults[i].RecordIndex);
-            finalResults[i] = new VectorSearchResult(externalId, rawResults[i].Score, metadata);
-        }
+            for (int i = 0; i < rawResults.Length; i++)
+            {
+                var (externalId, metadata) = _catalog.ResolveMetadata(segmentId: rawResults[i].SegmentId, recordIndex: rawResults[i].RecordIndex);
+                finalResults[i] = new VectorSearchResult(externalId, rawResults[i].Score, metadata);
+            }
 
-        return await Task.FromResult(finalResults);
+            return await Task.FromResult(finalResults);
+        }
+        finally
+        {
+            snapshot.Dispose();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
-        // 69항: 안전한 리소스 해제 순서 준수
-        _searchEngine.Dispose();
+        _currentSnapshot.Dispose();
         _writer.Dispose();
         _catalog.Dispose();
         

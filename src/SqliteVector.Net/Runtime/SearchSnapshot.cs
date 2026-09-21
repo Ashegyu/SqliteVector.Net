@@ -3,41 +3,51 @@ namespace SqliteVector.Net.Runtime;
 using System;
 using System.Threading;
 using SqliteVector.Net.Storage;
+using SqliteVector.Net.Search;
 
 /// <summary>
-/// G8: Search Snapshot
-/// 34, 35항: 검색을 시작할 때 현재 활성화된 세그먼트의 '특정 시점'을 고정합니다.
-/// 검색이 진행되는 동안 백그라운드에서 Writer가 새 벡터를 추가하거나 Compaction이 일어나도 
-/// 검색 결과의 일관성(Isolation)이 100% 보장됩니다.
+/// G8: Search Snapshot Lifecycle
 /// </summary>
 public sealed class SearchSnapshot : IDisposable
 {
     public long Generation { get; }
     
-    // G8: 단일 세그먼트 가정. 추후 SealedSegment[] 배열로 확장 가능
-    public SegmentReader Reader { get; } 
+    // G8: 읽기 전용 세그먼트 스냅샷
+    public MemoryMappedSearchEngine MMapEngine { get; } 
+    public System.Collections.BitArray LiveSet { get; }
     
     private int _refCount = 1;
 
-    public SearchSnapshot(long generation, SegmentReader reader)
+    public SearchSnapshot(long generation, MemoryMappedSearchEngine engine, System.Collections.BitArray liveSet)
     {
         Generation = generation;
-        Reader = reader;
+        MMapEngine = engine;
+        LiveSet = liveSet;
     }
 
-    public SearchSnapshot AddReference()
+    public bool TryAddReference()
     {
-        Interlocked.Increment(ref _refCount);
-        return this;
+        while (true)
+        {
+            int current = _refCount;
+            if (current == 0) return false; // Already disposed
+            
+            if (Interlocked.CompareExchange(ref _refCount, current + 1, current) == current)
+                return true;
+        }
+    }
+
+    public void Retire()
+    {
+        Dispose(); // Decrements the initial "Active" reference
     }
 
     public void Dispose()
     {
         if (Interlocked.Decrement(ref _refCount) == 0)
         {
-            // 참조 카운트가 0이 되면 안전하게 리소스 해제
-            // 70항: 검색 중에는 Dispose가 Mmap을 강제 해제하지 못하도록 보호됨
-            Reader.Dispose();
+            // 모든 참조가 해제되면 MMap 자원 해제
+            MMapEngine.Dispose();
         }
     }
 }

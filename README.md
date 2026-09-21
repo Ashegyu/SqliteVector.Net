@@ -73,6 +73,10 @@ When a `SearchAsync` begins, the VectorDatabase captures a lock-free snapshot of
 ### 3. Execution Phase
 The search request is fanned out across all `MemoryMappedSearchEngine` instances. `unsafe` pointers traverse the physical vector floats, masking out dead elements using the snapshotted `LiveSet`. Results are maintained in a thread-safe `DenseTopKBuffer` utilizing zero string allocations. Only the definitive global Top-K identities are lazily resolved from SQLite.
 
+## ⚖️ Disclaimer of Liability
+
+**This software is provided "as is", without warranty of any kind, express or implied.** 
+By using `SqliteVector.NET`, you agree that the authors, contributors, or copyright holders shall not be liable for any claim, damages, data loss, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software. Please thoroughly test this software in your own environment before deploying it to production.
 
 ---
 
@@ -149,3 +153,8 @@ await db.CompactAsync();
 
 ### 3. Execution Phase
 검색 요청은 모든 `MemoryMappedSearchEngine` 인스턴스로 분산(Fan-out)됩니다. `unsafe` 포인터가 물리적 벡터 부동소수점을 순회하며, 스냅샷된 `LiveSet`을 사용하여 삭제된 요소를 마스킹합니다. 결과는 문자열 할당(String allocation)이 전혀 없는 스레드 안전한 `DenseTopKBuffer`에 유지됩니다. 최종적인 글로벌 Top-K 식별자들만 SQLite에서 지연(Lazy) 해석됩니다.
+
+## ⚖️ 책임 면제 조항 (Disclaimer of Liability)
+
+**본 소프트웨어는 상품성이나 특정 목적에 대한 적합성을 포함하여, 어떠한 명시적이나 묵시적인 보증 없이 "있는 그대로(As is)" 제공됩니다.**
+`SqliteVector.NET`을 사용함에 있어 발생하는 데이터 손실, 서비스 중단, 버그로 인한 금전적 손해 등 어떠한 경우에도 소프트웨어의 작성자, 기여자 또는 저작권자는 계약, 불법 행위 등에 관계없이 어떠한 책임도 지지 않습니다. 상용 환경(Production)에 도입하기 전에 반드시 귀하의 환경에서 충분한 자체 테스트를 거치시기 바랍니다.

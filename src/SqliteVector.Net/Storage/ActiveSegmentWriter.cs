@@ -41,24 +41,35 @@ public sealed class ActiveSegmentWriter : IDisposable
 
     private void InitializeSegment()
     {
-        Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
-        MemoryMarshal.Write(headerBytes, in _header);
-        
         bool isNewFile = _fileStream.Length == 0;
-
-        _fileStream.Seek(0, SeekOrigin.Begin);
-        _fileStream.Write(headerBytes);
 
         if (isNewFile)
         {
-            // 새 파일인 경우: 14항 Layout 공간 예약
+            // 신규 파일인 경우: 헤더 작성 및 14항 Layout 공간 예약
+            Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
+            MemoryMarshal.Write(headerBytes, in _header);
+            
+            _fileStream.Seek(0, SeekOrigin.Begin);
+            _fileStream.Write(headerBytes);
+            
             long totalSize = _header.VectorRegionOffset + ((long)_header.Capacity * _header.VectorStride);
             _fileStream.SetLength(totalSize);
             _fileStream.Flush(flushToDisk: true);
         }
         else
         {
-            // 복구(Recovery) 로직: 기존 파일이 있으면 디렉터리를 스캔하여 다음 빈 인덱스를 찾습니다.
+            // 기존 파일인 경우: 헤더를 덮어쓰지 않고 읽어서 검증 (Safe Reopen)
+            _fileStream.Seek(0, SeekOrigin.Begin);
+            Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
+            _fileStream.ReadExactly(headerBytes);
+            var existingHeader = MemoryMarshal.Read<SegmentHeader>(headerBytes);
+            
+            if (existingHeader.Magic != SegmentHeader.MagicNumber)
+                throw new InvalidDataException("Invalid Segment Magic Number");
+            if (existingHeader.Dimensions != _header.Dimensions)
+                throw new InvalidOperationException($"Dimension mismatch. Expected {_header.Dimensions}, got {existingHeader.Dimensions}");
+                
+            // 복구(Recovery): 디렉터리를 스캔하여 다음 빈 레코드 인덱스 찾기
             _currentRecordCount = FindNextFreeRecordIndex();
         }
     }
@@ -94,7 +105,15 @@ public sealed class ActiveSegmentWriter : IDisposable
         if (_isDisposed) throw new ObjectDisposedException(nameof(ActiveSegmentWriter));
         
         if (vector.Length != _header.Dimensions)
-            throw new ArgumentException($"벡터 차원이 일치하지 않습니다. 기대값: {_header.Dimensions}, 실제값: {vector.Length}");
+            throw new ArgumentException($"벡터 차원이 일치하지 않습니다. 기대값: {_header.Dimensions}, 실제: {vector.Length}");
+
+        // NaN / Infinity 검사
+        if (vector.ContainsAnyExceptInRange(float.MinValue, float.MaxValue))
+        {
+            // float.IsNaN이나 float.IsInfinity는 TensorPrimitives.IndexOfAnyExcept 등으로 최적화 가능
+            // .NET 8/9 범위 밖 검사를 통해 빠르고 안전하게 검증합니다.
+            throw new ArgumentException("Vector contains NaN or Infinity values.");
+        }
 
         lock (_writeLock)
         {

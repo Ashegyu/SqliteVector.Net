@@ -21,12 +21,17 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
     private readonly RecordDirectoryEntry* _directoryPtr;
     private readonly VectorMetric _metric;
 
-    public MemoryMappedSearchEngine(string filePath, VectorMetric metric)
+    private readonly bool _isNormalized;
+
+    public MemoryMappedSearchEngine(string filePath, VectorMetric metric, bool isNormalized = false)
     {
         _metric = metric;
+        _isNormalized = isNormalized;
         
-        // 1. 읽기 전용 매핑 (Writer와 경합하지 않도록 FileShare.ReadWrite 필수)
+        // 1. 읽기 전용으로 열기 (Writer와 충돌하지 않도록 FileShare.ReadWrite 필수)
         var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        
+        // 2. 포인터 획득을 위해 맵핑
         _mmf = MemoryMappedFile.CreateFromFile(fs, null, 0, MemoryMappedFileAccess.Read, HandleInheritability.None, false);
         _accessor = _mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
         
@@ -34,13 +39,29 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
         _accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
         _basePointer = ptr;
 
-        // 2. 포인터에서 직접 Header 역직렬화 (Zero-Copy)
+        // 3. 헤더 읽기 및 강력한 검증 (Unsafe 메모리 접근 전 필수)
         _header = MemoryMarshal.Read<SegmentHeader>(new ReadOnlySpan<byte>(_basePointer, Marshal.SizeOf<SegmentHeader>()));
 
         if (_header.Magic != SegmentHeader.MagicNumber)
             throw new InvalidDataException("Invalid Segment Magic Number");
+            
+        // G4: Unsafe MMap Validation
+        if (_header.FormatVersion != 2)
+            throw new InvalidDataException($"Unsupported FormatVersion: {_header.FormatVersion}");
+        if (_header.Dimensions <= 0)
+            throw new InvalidDataException($"Invalid Dimensions: {_header.Dimensions}");
+        if (_header.PayloadBytes != _header.Dimensions * 4)
+            throw new InvalidDataException($"Invalid PayloadBytes: {_header.PayloadBytes}");
+        if (_header.VectorStride < _header.PayloadBytes || _header.VectorStride % 64 != 0)
+            throw new InvalidDataException($"Invalid VectorStride: {_header.VectorStride}");
+        if (_header.DirectoryOffset < 128)
+            throw new InvalidDataException($"Invalid DirectoryOffset: {_header.DirectoryOffset}");
+            
+        long expectedMinSize = _header.VectorRegionOffset + ((long)_header.Capacity * _header.VectorStride);
+        if (_accessor.Capacity < expectedMinSize)
+            throw new InvalidDataException($"MMap capacity ({_accessor.Capacity}) is smaller than expected size ({expectedMinSize})");
 
-        // 3. 디렉터리 포인터 캐싱 (Zero-Copy)
+        // 4. 디렉터리 포인터 캐싱 (Zero-Copy)
         _directoryPtr = (RecordDirectoryEntry*)(_basePointer + _header.DirectoryOffset);
     }
 
@@ -70,7 +91,7 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
             float score = _metric switch
             {
                 VectorMetric.DotProduct => VectorMath.DotProduct(query, target),
-                VectorMetric.Cosine => VectorMath.CosineSimilarity(query, target),
+                VectorMetric.Cosine => _isNormalized ? VectorMath.DotProduct(query, target) : VectorMath.CosineSimilarity(query, target),
                 VectorMetric.EuclideanSquared => -VectorMath.EuclideanDistanceSquared(query, target),
                 _ => throw new NotSupportedException()
             };
@@ -115,7 +136,7 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
                     float score = _metric switch
                     {
                         VectorMetric.DotProduct => VectorMath.DotProduct(localQuery, target),
-                        VectorMetric.Cosine => VectorMath.CosineSimilarity(localQuery, target),
+                        VectorMetric.Cosine => _isNormalized ? VectorMath.DotProduct(localQuery, target) : VectorMath.CosineSimilarity(localQuery, target),
                         VectorMetric.EuclideanSquared => -VectorMath.EuclideanDistanceSquared(localQuery, target),
                         _ => throw new NotSupportedException()
                     };

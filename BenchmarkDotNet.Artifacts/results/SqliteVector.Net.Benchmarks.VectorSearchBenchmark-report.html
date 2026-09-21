@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8' />
+<title>SqliteVector.Net.Benchmarks.VectorSearchBenchmark-20260921-150341</title>
+
+<style type="text/css">
+	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
+	td, th { padding: 6px 13px; border: 1px solid #ddd; text-align: right; }
+	tr { background-color: #fff; border-top: 1px solid #ccc; }
+	tr:nth-child(even) { background: #f8f8f8; }
+</style>
+</head>
+<body>
+<pre><code>
+BenchmarkDotNet v0.15.8, Windows 11 (10.0.26200.9457/25H2/2025Update/HudsonValley2)
+Intel Core Ultra 7 270K Plus 3.70GHz, 1 CPU, 24 logical and 24 physical cores
+.NET SDK 10.0.401
+  [Host]   : .NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3
+  ShortRun : .NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3
+</code></pre>
+<pre><code>Job=ShortRun  IterationCount=3  LaunchCount=1  
+WarmupCount=3  
+</code></pre>
+
+<table>
+<thead><tr><th>Method       </th><th>Mean</th><th>Error</th><th>StdDev</th><th>Ratio</th><th>RatioSD</th><th>Allocated</th><th>Alloc Ratio</th>
+</tr>
+</thead><tbody><tr><td>Search_SingleThread</td><td>3.642 ms</td><td>1.5129 ms</td><td>0.0829 ms</td><td>1.00</td><td>0.03</td><td>26.77 KB</td><td>1.00</td>
+</tr><tr><td>Search_MultiThread</td><td>3.183 ms</td><td>0.2758 ms</td><td>0.0151 ms</td><td>0.87</td><td>0.02</td><td>37.28 KB</td><td>1.39</td>
+</tr></tbody></table>
+</body>
+</html>

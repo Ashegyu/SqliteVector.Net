@@ -44,32 +44,58 @@ public sealed class VectorDatabase : IAsyncDisposable
     {
         Directory.CreateDirectory(directoryPath);
         string dbPath = Path.Combine(directoryPath, "knowledge.db");
-        string vecPath = Path.Combine(directoryPath, "segment_000001.vec"); // 초기 버전은 단일 파일
+        string vecPath = Path.Combine(directoryPath, "segment_000001.vec"); // 초기 단일 세그먼트 고정
 
         var catalog = new SqliteCatalog(dbPath);
         
-        // V2.0 파일 헤더 설정
+        // G1: Store Contract Validation
+        string? storedDim = catalog.GetStoreInfo("Dimensions");
+        if (storedDim == null)
+        {
+            // 신규 DB: Contract 저장
+            catalog.SetStoreInfo("Dimensions", options.Dimensions.ToString());
+            catalog.SetStoreInfo("Metric", options.Metric.ToString());
+            catalog.SetStoreInfo("NormalizeVectors", options.NormalizeVectors.ToString());
+        }
+        else
+        {
+            // 기존 DB: Contract 검증
+            if (int.Parse(storedDim) != options.Dimensions)
+                throw new InvalidOperationException($"StoreContract Mismatch: 기존 Dimensions({storedDim})가 요청된 Dimensions({options.Dimensions})와 다릅니다.");
+            
+            string storedMetric = catalog.GetStoreInfo("Metric") ?? options.Metric.ToString();
+            if (storedMetric != options.Metric.ToString())
+                throw new InvalidOperationException($"StoreContract Mismatch: 기존 Metric({storedMetric})이 요청된 Metric({options.Metric})과 다릅니다.");
+        }
+
+        // V2.0 하드코딩 레이아웃 설정
         var header = new SegmentHeader(1, 1, options.Dimensions, VectorElementType.Float32, capacity: 100000, alignment: 64);
         var writer = new ActiveSegmentWriter(vecPath, header);
-        var searchEngine = new MemoryMappedSearchEngine(vecPath, options.Metric);
+        var searchEngine = new MemoryMappedSearchEngine(vecPath, options.Metric, options.NormalizeVectors);
 
         return await Task.FromResult(new VectorDatabase(catalog, writer, searchEngine, options));
     }
 
     public async Task UpsertAsync(string id, ReadOnlyMemory<float> vector, string? metadata = null)
     {
-        // 48항: Normalize on write (선택사항)
+        // 48항: Normalize on write (계약 준수)
+        float[]? normalizedArray = null;
+        ReadOnlySpan<float> span = vector.Span;
+        
         if (_options.NormalizeVectors && _options.Metric == VectorMetric.Cosine)
         {
-            // 실제 구현에서는 벡터를 복사한 뒤 노말라이즈 처리 (현재는 생략)
+            normalizedArray = new float[span.Length];
+            span.CopyTo(normalizedArray);
+            VectorMath.Normalize(normalizedArray);
+            span = normalizedArray;
         }
 
         lock (_syncRoot)
         {
-            // 1. 디스크에 벡터 Append 및 Flush
-            int recordIndex = _writer.AppendVector(vector.Span, generation: 1);
+            // 1. 디스크에 Append 후 Flush (AppendVector 내에서 NaN 체크)
+            int recordIndex = _writer.AppendVector(span, generation: 1);
             
-            // 2. SQLite 트랜잭션으로 원자적 커밋 (Atomic Update)
+            // 2. SQLite 트랜잭션 커밋 (Atomic Update)
             using var tx = _catalog.BeginTransaction();
             _catalog.UpsertVectorLocation(tx, id, 1, 1, recordIndex, metadata);
             tx.Commit();

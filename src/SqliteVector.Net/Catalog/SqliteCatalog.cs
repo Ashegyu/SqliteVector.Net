@@ -24,7 +24,7 @@ public sealed class SqliteCatalog : IDisposable
     private void InitializeSchema()
     {
         using var cmd = _connection.CreateCommand();
-        // 7항 스키마 적용
+        // 7항 스키마 정의
         cmd.CommandText = @"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
@@ -40,8 +40,15 @@ public sealed class SqliteCatalog : IDisposable
                 generation INTEGER NOT NULL,
                 segment_id INTEGER NULL,
                 record_index INTEGER NULL,
-                deleted INTEGER NOT NULL,
-                metadata TEXT NULL
+                deleted INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS vector_records (
+                segment_id INTEGER NOT NULL,
+                record_index INTEGER NOT NULL,
+                external_id TEXT NOT NULL,
+                metadata TEXT NULL,
+                PRIMARY KEY (segment_id, record_index)
             );
 
             CREATE TABLE IF NOT EXISTS segments (
@@ -77,14 +84,16 @@ public sealed class SqliteCatalog : IDisposable
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandText = @"
-            INSERT INTO vectors (external_id, generation, segment_id, record_index, deleted, metadata)
-            VALUES (@id, @gen, @seg, @rec, 0, @meta)
+            INSERT OR IGNORE INTO vector_records (segment_id, record_index, external_id, metadata)
+            VALUES (@seg, @rec, @id, @meta);
+
+            INSERT INTO vectors (external_id, generation, segment_id, record_index, deleted)
+            VALUES (@id, @gen, @seg, @rec, 0)
             ON CONFLICT(external_id) DO UPDATE SET
                 generation = @gen,
                 segment_id = @seg,
                 record_index = @rec,
-                deleted = 0,
-                metadata = @meta;
+                deleted = 0;
         ";
         
         cmd.Parameters.AddWithValue("@id", externalId);
@@ -102,13 +111,14 @@ public sealed class SqliteCatalog : IDisposable
     }
 
     /// <summary>
-    /// 53항: Top-K가 결정된 후 물리적 주소(Segment, Record)를 가지고 
-    /// 논리적 ID와 메타데이터를 단건(또는 배치) 조회합니다. (비용 O(K))
+    /// 53항: Top-K에 대해 논리 주소(Segment, Record)를 기반으로 
+    /// 논리 ID와 메타데이터를 O(K) 단계에 단건 조회합니다.
+    /// 스냅샷 락 없이도 Immutable vector_records 테이블을 조회하므로 충돌하지 않습니다.
     /// </summary>
     public (string ExternalId, string? Metadata) ResolveMetadata(long segmentId, int recordIndex)
     {
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = "SELECT external_id, metadata FROM vectors WHERE segment_id = @seg AND record_index = @rec AND deleted = 0";
+        cmd.CommandText = "SELECT external_id, metadata FROM vector_records WHERE segment_id = @seg AND record_index = @rec";
         cmd.Parameters.AddWithValue("@seg", segmentId);
         cmd.Parameters.AddWithValue("@rec", recordIndex);
         using var reader = cmd.ExecuteReader();
@@ -121,7 +131,7 @@ public sealed class SqliteCatalog : IDisposable
             );
         }
         
-        throw new InvalidDataException($"해당 벡터 데이터를 카탈로그에서 찾을 수 없습니다. (Seg:{segmentId}, Rec:{recordIndex})");
+        throw new InvalidDataException($"해당 물리 레코드를 카탈로그에서 찾을 수 없습니다. (Seg:{segmentId}, Rec:{recordIndex})");
     }
 
     public void DeleteVectorLocation(SqliteTransaction transaction, string externalId)
@@ -151,6 +161,24 @@ public sealed class SqliteCatalog : IDisposable
             liveSet.Set(reader.GetInt32(0), true);
         }
         return liveSet;
+    }
+
+    public void SetStoreInfo(string key, string value)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "INSERT OR REPLACE INTO store_info (key, value) VALUES (@key, @val)";
+        cmd.Parameters.AddWithValue("@key", key);
+        cmd.Parameters.AddWithValue("@val", value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public string? GetStoreInfo(string key)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT value FROM store_info WHERE key = @key";
+        cmd.Parameters.AddWithValue("@key", key);
+        var result = cmd.ExecuteScalar();
+        return result as string;
     }
 
     public void Dispose()

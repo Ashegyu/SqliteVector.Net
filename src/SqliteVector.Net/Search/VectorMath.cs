@@ -24,4 +24,13 @@ public static class VectorMath
         float dist = TensorPrimitives.Distance(query, target);
         return dist * dist;
     }
+
+    public static void Normalize(Span<float> vector)
+    {
+        float norm = TensorPrimitives.Norm(vector);
+        if (norm > 0)
+        {
+            TensorPrimitives.Divide(vector, norm, vector);
+        }
+    }
 }

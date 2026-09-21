@@ -1,4 +1,4 @@
-namespace SqliteVector.Net;
+namespace SqliteVector.Net.Search;
 
 using System;
 

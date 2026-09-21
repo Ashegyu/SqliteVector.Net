@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/SqliteVector.Net.Benchmarks/SqliteVector.Net.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/SqliteVector.Net/SqliteVector.Net.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SqliteVector.Net.Tests/SqliteVector.Net.Tests.csproj" />
+  </Folder>
+</Solution>

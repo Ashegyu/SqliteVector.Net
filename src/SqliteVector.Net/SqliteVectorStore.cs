@@ -3,6 +3,7 @@ namespace SqliteVector.Net;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using SqliteVector.Net.Search;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
@@ -94,7 +95,7 @@ public class SqliteVectorStore : IDisposable
             reader.GetBytes(1, 0, buffer, 0, _byteSize);
             
             // SIMD 하드웨어 가속 검색
-            float score = VectorMath.CalculateSimilarity(querySpan, buffer);
+            float score = VectorMath.DotProduct(querySpan, MemoryMarshal.Cast<byte, float>(buffer));
             
             string? metadata = reader.IsDBNull(2) ? null : reader.GetString(2);
             topKBuffer.Add(id, score, metadata);

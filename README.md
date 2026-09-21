@@ -27,18 +27,20 @@ SqliteVector.NET v2.0 has been hardened against extreme adversarial conditions, 
 - 🧹 **Atomic Compaction**: A background engine reclaims physical disk space from logically overwritten vectors. The compaction process uses atomic `.tmp` file renaming, meaning a crash mid-compaction safely aborts without leaving half-baked active segments.
 - 🛡️ **Corruption Defense (Unsafe Pointer Guard)**: Strict mathematical boundary checks are performed on segment headers before any `mmap` views are established. File truncation, header poisoning, or invalid payload offsets are safely rejected with `VectorStoreCorruptionException`, averting `AccessViolationException` process crashes.
 
-## 📊 Benchmark Performance (100,000 Vectors)
+## 📊 Benchmark Performance (10,000 Vectors)
 
-Our core design philosophy is **Zero-Allocation during the scan hot-path**. By relying entirely on `TensorPrimitives` (SIMD) and `unsafe` memory-mapped pointers, the garbage collector is completely bypassed until the final `Top-K` objects are materialized.
+### **Zero Per-Vector Allocation**
 
-| Method (100k Vectors) | Dimensions | Mean (Speed) | Allocated (GC) |
-|-----------------------|-----------:|-------------:|---------------:|
-| SingleThread Search   | 384        | **0.51 ms**  | 13.3 KB (O(K)) |
-| MultiThread Search    | 384        | **0.21 ms**  | 27.0 KB (O(K)) |
-| SingleThread Search   | 1536       | **2.92 ms**  | 13.3 KB (O(K)) |
-| MultiThread Search    | 1536       | **0.91 ms**  | 31.0 KB (O(K)) |
+Our core design philosophy is to completely avoid garbage collection during the search phase. The SIMD exact-scan hot path performs **zero managed allocations per scanned vector**. Query-level allocations are strictly bounded by Top-K result materialization and search orchestration.
 
-*Tested on Intel Core Ultra 7 (AVX2/AVX-512) via BenchmarkDotNet. The GC allocations remain strictly flat `O(K)` regardless of whether you search 100,000 or 10,000,000 vectors.*
+| Method (10K Vectors) | Dimensions | Mean (Speed) | Effective Throughput | Allocated (GC) |
+|-----------------------|-----------:|-------------:|---------------------:|---------------:|
+| SingleThread Search   | 384        | **0.51 ms**  | ~30.1 GB/s           | 13.3 KB (O(K)) |
+| MultiThread Search    | 384        | **0.21 ms**  | ~73.1 GB/s           | 27.0 KB (O(K)) |
+| SingleThread Search   | 1536       | **2.92 ms**  | ~21.0 GB/s           | 13.3 KB (O(K)) |
+| MultiThread Search    | 1536       | **0.91 ms**  | ~67.5 GB/s           | 31.0 KB (O(K)) |
+
+*Tested on Intel Core Ultra 7 (AVX2/AVX-512) via BenchmarkDotNet. The GC allocations remain strictly flat `O(K)` regardless of whether you search 10,000 or 10,000,000 vectors. Effective throughput measures physical bytes scanned per second.*
 
 ## 🚀 Quick Start
 
@@ -121,18 +123,20 @@ SqliteVector.NET v2.0은 극한의 적대적 조건(Adversarial conditions), 스
 - 🧹 **원자적 컴팩션 (Atomic Compaction)**: 백그라운드 엔진이 논리적으로 덮어씌워진(Overwritten) 벡터들로부터 물리적 디스크 공간을 회수합니다. 컴팩션 프로세스는 원자적인 `.tmp` 파일 이름 변경을 사용하므로, 중간에 크래시가 발생하더라도 반쪽짜리 활성 세그먼트를 남기지 않고 안전하게 중단됩니다.
 - 🛡️ **손상 방어 (Unsafe Pointer Guard)**: `mmap` 뷰가 설정되기 전에 세그먼트 헤더에 대해 엄격한 수학적 경계 검사가 수행됩니다. 파일 절단, 헤더 오염, 또는 잘못된 페이로드 오프셋은 `VectorStoreCorruptionException`과 함께 안전하게 거부되어 프로세스가 사망(`AccessViolationException`)하는 것을 방지합니다.
 
-## 📊 벤치마크 성능 (10만 개 벡터 기준)
+## 📊 벤치마크 성능 (10,000 개 벡터 기준)
 
-우리 엔진의 핵심 설계 철학은 **스캔 핫 패스(Hot-path) 구간에서의 Zero-Allocation (할당 제로)** 입니다. `TensorPrimitives` (SIMD)와 `unsafe` 메모리 맵 포인터에 전적으로 의존함으로써, 최종 `Top-K` 결과 객체가 생성되기 전까지 가비지 컬렉터(GC)를 완벽하게 우회합니다.
+### **벡터당 메모리 할당 제로 (Zero Per-Vector Allocation)**
 
-| 검색 방식 (10만 개 벡터) | 차원 (Dims) | 평균 속도 (Mean) | 메모리 할당 (GC) |
-|-----------------------|-----------:|-------------:|---------------:|
-| 단일 스레드 검색 (Single)   | 384        | **0.51 ms**  | 13.3 KB (O(K)) |
-| 다중 스레드 검색 (Multi)    | 384        | **0.21 ms**  | 27.0 KB (O(K)) |
-| 단일 스레드 검색 (Single)   | 1536       | **2.92 ms**  | 13.3 KB (O(K)) |
-| 다중 스레드 검색 (Multi)    | 1536       | **0.91 ms**  | 31.0 KB (O(K)) |
+우리 엔진의 핵심 설계 철학은 검색 단계에서 가비지 컬렉터(GC)를 완전히 배제하는 것입니다. SIMD exact-scan 핫 패스(Hot-path) 구간에서는 **스캔되는 벡터당 관리되는 메모리 할당이 전혀 발생하지 않습니다 (Zero-Allocation)**. 쿼리 수준의 메모리 할당은 오직 Top-K 결과 객체 생성과 검색 오케스트레이션에만 엄격하게 국한됩니다.
 
-*인텔 코어 Ultra 7 (AVX2/AVX-512) 환경에서 BenchmarkDotNet으로 측정되었습니다. GC 할당량은 검색 대상이 10만 개이든 1,000만 개이든 상관없이 오직 반환되는 Top-K 갯수에만 비례하여 `O(K)`로 고정 유지됩니다.*
+| 검색 방식 (10K Vectors) | 차원 (Dims) | 평균 속도 (Mean) | 실효 대역폭 (Throughput)| 메모리 할당 (GC) |
+|-----------------------|-----------:|-------------:|----------------------:|---------------:|
+| 단일 스레드 검색 (Single)   | 384        | **0.51 ms**  | ~30.1 GB/s            | 13.3 KB (O(K)) |
+| 다중 스레드 검색 (Multi)    | 384        | **0.21 ms**  | ~73.1 GB/s            | 27.0 KB (O(K)) |
+| 단일 스레드 검색 (Single)   | 1536       | **2.92 ms**  | ~21.0 GB/s            | 13.3 KB (O(K)) |
+| 다중 스레드 검색 (Multi)    | 1536       | **0.91 ms**  | ~67.5 GB/s            | 31.0 KB (O(K)) |
+
+*인텔 코어 Ultra 7 (AVX2/AVX-512) 환경에서 BenchmarkDotNet으로 측정되었습니다. GC 할당량은 검색 대상이 1만 개이든 1,000만 개이든 상관없이 오직 반환되는 Top-K 갯수에만 비례하여 `O(K)`로 고정 유지됩니다. 실효 대역폭은 초당 스캔된 물리적 바이트(Bytes)를 의미합니다.*
 
 ## 🚀 빠른 시작 (Quick Start)
 

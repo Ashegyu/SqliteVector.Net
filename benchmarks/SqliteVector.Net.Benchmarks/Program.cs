@@ -28,7 +28,8 @@ namespace SqliteVector.Net.Benchmarks
             _db = await VectorDatabase.OpenAsync(_testDir, new VectorDatabaseOptions { Dimensions = this.Dimensions, Metric = VectorMetric.DotProduct });
             
             var rand = new Random(42);
-            for (int i = 0; i < 10000; i++)
+            // Insert 100,000 vectors for a realistic benchmark!
+            for (int i = 0; i < 100_000; i++)
             {
                 var vec = new float[this.Dimensions];
                 for (int d = 0; d < this.Dimensions; d++) vec[d] = (float)rand.NextDouble();
@@ -40,15 +41,15 @@ namespace SqliteVector.Net.Benchmarks
         }
 
         [Benchmark(Baseline = true)]
-        public async Task Search_SingleThread()
+        public async Task<VectorSearchResult[]> Search_SingleThread()
         {
-            await _db.SearchAsync(_query, new VectorSearchOptions { TopK = 10, UseParallelSearch = false });
+            return await _db.SearchAsync(_query, new VectorSearchOptions { TopK = 10, UseParallelSearch = false });
         }
 
         [Benchmark]
-        public async Task Search_MultiThread()
+        public async Task<VectorSearchResult[]> Search_MultiThread()
         {
-            await _db.SearchAsync(_query, new VectorSearchOptions { TopK = 10, UseParallelSearch = true });
+            return await _db.SearchAsync(_query, new VectorSearchOptions { TopK = 10, UseParallelSearch = true });
         }
 
         [Benchmark(OperationsPerInvoke = 100)]

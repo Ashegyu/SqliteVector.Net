@@ -328,7 +328,6 @@ public sealed class VectorDatabase : IAsyncDisposable
             engineToUse.ValidateLiveRecords(liveSet);
             
             newLiveSets.Add(segId, liveSet);
-            Console.WriteLine($"[RefreshSnapshot] Loaded segment {segId} with {engineToUse.Header.Capacity} records, LiveSet bits set: {liveSet.Cast<bool>().Count(b => b)}");
         }
         
         var newSnapshot = new SearchSnapshot(currentRev, newEngines, newLiveSets);

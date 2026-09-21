@@ -71,3 +71,8 @@ foreach (var res in results)
 - 🔄 **스냅샷 격리 (MVCC)**: 검색 중인 Reader와 데이터를 추가하는 Writer가 서로에게 락(Lock)을 걸지 않습니다.
 - 💾 **Out-of-Core 스트리밍**: 물리적 RAM 용량을 초과하는 거대 데이터셋을 위해 `ArrayPool`을 활용한 순차 I/O 스트리밍 검색을 지원합니다.
 - 🧹 **조각모음 (Compaction)**: 삭제(Tombstone)된 레코드들을 백그라운드에서 정리하고 물리적 용량을 회수하는 가비지 컬렉터가 내장되어 있습니다.
+
+## 🚀 Recent V2.0 Stability Updates
+- **G7.1 & G8 (LiveSet Snapshot Isolation)**: Resolved physical stale record visibility bugs. VectorDatabase now dynamically captures an atomic MVCC snapshot (LiveSet BitArray) from SQLite and filters MemoryMappedSearchEngine pointer reads, completely eliminating edge cases with logically deleted or updated vectors.
+- **O(K) Zero-Allocation Search**: DenseTopKBuffer has been completely rewritten using value-type Candidate structs. All string allocations during SIMD hot-path have been completely eliminated. Metadata strings are only allocated for the final Top-K results.
+- **Crash-safe Reopen and Layout**: Fixed a critical MemoryMappedFile truncation layout bug that triggered AccessViolationException. ActiveSegmentWriter now properly orchestrates struct alignments (128-byte headers, 32-byte entries) and supports resume operations (FileMode.OpenOrCreate) allowing seamless DB restarts.

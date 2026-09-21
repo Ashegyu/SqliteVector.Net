@@ -61,7 +61,7 @@ public class MMapSearchEngineTests
 
             for (int i = 0; i < 3; i++)
             {
-                results[i].Id.Should().Be(oracleResults[i].Id.ToString());
+                results[i].RecordIndex.Should().Be(oracleResults[i].Id);
                 results[i].Score.Should().BeApproximately(oracleResults[i].Score, 0.0001f);
             }
         }

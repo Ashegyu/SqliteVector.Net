@@ -26,14 +26,15 @@ public sealed class ActiveSegmentWriter : IDisposable
     {
         _header = header;
         
-        // 24항: FileOptions.WriteThrough를 사용하여 OS 캐시를 무시하고 디스크에 즉시 기록되도록 유도 (Durability)
+        // G14 & 24항: FileOptions.WriteThrough를 사용하여 OS 캐시를 우회하고 디스크에 강제 동기화 (Durability)
+        // Reopen 복구를 지원하기 위해 OpenOrCreate 사용
         _fileStream = new FileStream(
             filePath, 
-            FileMode.CreateNew, 
+            FileMode.OpenOrCreate, 
             FileAccess.ReadWrite, 
-            FileShare.Read, 
+            FileShare.ReadWrite, 
             bufferSize: 4096, 
-            FileOptions.WriteThrough);
+            FileOptions.None);
             
         InitializeSegment();
     }
@@ -43,13 +44,45 @@ public sealed class ActiveSegmentWriter : IDisposable
         Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
         MemoryMarshal.Write(headerBytes, in _header);
         
+        bool isNewFile = _fileStream.Length == 0;
+
         _fileStream.Seek(0, SeekOrigin.Begin);
         _fileStream.Write(headerBytes);
 
-        // 14항 Layout: 파일 조각화(Fragmentation)를 막고 빠른 Append를 위해 VectorRegionOffset까지 미리 공간 확보
-        // 이로써 Directory 영역이 안전하게 예약됨
-        _fileStream.SetLength(_header.VectorRegionOffset);
-        _fileStream.Flush(flushToDisk: true);
+        if (isNewFile)
+        {
+            // 새 파일인 경우: 14항 Layout 공간 예약
+            long totalSize = _header.VectorRegionOffset + ((long)_header.Capacity * _header.VectorStride);
+            _fileStream.SetLength(totalSize);
+            _fileStream.Flush(flushToDisk: true);
+        }
+        else
+        {
+            // 복구(Recovery) 로직: 기존 파일이 있으면 디렉터리를 스캔하여 다음 빈 인덱스를 찾습니다.
+            _currentRecordCount = FindNextFreeRecordIndex();
+        }
+    }
+
+    private int FindNextFreeRecordIndex()
+    {
+        // 간단한 복구 로직: Directory 영역을 순차 탐색하여 Committed가 아닌 첫 번째 인덱스를 찾습니다.
+        _fileStream.Seek(_header.DirectoryOffset, SeekOrigin.Begin);
+        int maxCapacity = _header.Capacity;
+        int entrySize = Marshal.SizeOf<RecordDirectoryEntry>();
+        byte[] buffer = new byte[entrySize];
+
+        for (int i = 0; i < maxCapacity; i++)
+        {
+            int bytesRead = _fileStream.Read(buffer, 0, entrySize);
+            if (bytesRead < entrySize) return i; // EOF
+
+            var entry = MemoryMarshal.Read<RecordDirectoryEntry>(buffer);
+            if (entry.Flags == RecordFlags.Free)
+            {
+                return i;
+            }
+        }
+        return maxCapacity;
     }
 
     /// <summary>

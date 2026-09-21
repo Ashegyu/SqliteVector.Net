@@ -2,72 +2,67 @@ namespace SqliteVector.Net.Search;
 
 using System;
 
-/// <summary>
-/// 검색 중 상위 K개 결과만 메모리에 유지하는 최소 힙(Min-Heap) 버퍼
-/// </summary>
+// O(K) Allocation을 위한 값 타입 후보 구조체
+public readonly record struct Candidate(long SegmentId, int RecordIndex, float Score);
+
 public class DenseTopKBuffer
 {
-    private readonly VectorSearchResult[] _heap;
+    private readonly Candidate[] _heap;
     private int _count;
+
     public int Capacity { get; }
 
     public DenseTopKBuffer(int k)
     {
+        if (k <= 0) throw new ArgumentOutOfRangeException(nameof(k), "TopK must be greater than 0");
         Capacity = k;
-        _heap = new VectorSearchResult[k];
+        _heap = new Candidate[k];
     }
 
-    public void Add(string id, float score, string? metadata)
+    public void Add(long segmentId, int recordIndex, float score)
     {
         if (_count < Capacity)
         {
-            _heap[_count] = new VectorSearchResult(id, score, metadata);
-            SiftUp(_count);
+            _heap[_count] = new Candidate(segmentId, recordIndex, score);
             _count++;
+            if (_count == Capacity) BuildMinHeap();
         }
         else if (score > _heap[0].Score)
         {
-            _heap[0] = new VectorSearchResult(id, score, metadata);
-            SiftDown(0);
+            _heap[0] = new Candidate(segmentId, recordIndex, score);
+            Heapify(0);
         }
     }
 
-    public VectorSearchResult[] GetSortedResults()
+    public Candidate[] GetSortedResults()
     {
-        var result = new VectorSearchResult[_count];
-        Array.Copy(_heap, result, _count);
-        Array.Sort(result, (a, b) => b.Score.CompareTo(a.Score)); 
-        return result;
+        var results = new Candidate[_count];
+        Array.Copy(_heap, results, _count);
+        Array.Sort(results, (a, b) => b.Score.CompareTo(a.Score));
+        return results;
     }
 
-    private void SiftUp(int index)
+    private void BuildMinHeap()
     {
-        var item = _heap[index];
-        while (index > 0)
+        for (int i = (_count / 2) - 1; i >= 0; i--)
+            Heapify(i);
+    }
+
+    private void Heapify(int i)
+    {
+        int smallest = i;
+        int left = 2 * i + 1;
+        int right = 2 * i + 2;
+
+        if (left < _count && _heap[left].Score < _heap[smallest].Score) smallest = left;
+        if (right < _count && _heap[right].Score < _heap[smallest].Score) smallest = right;
+
+        if (smallest != i)
         {
-            int parentIndex = (index - 1) / 2;
-            var parent = _heap[parentIndex];
-            if (item.Score >= parent.Score) break;
-            _heap[index] = parent;
-            index = parentIndex;
+            var temp = _heap[i];
+            _heap[i] = _heap[smallest];
+            _heap[smallest] = temp;
+            Heapify(smallest);
         }
-        _heap[index] = item;
-    }
-
-    private void SiftDown(int index)
-    {
-        var item = _heap[index];
-        while (index < _count / 2)
-        {
-            int leftChildIndex = 2 * index + 1;
-            int rightChildIndex = leftChildIndex + 1;
-            int minChildIndex = rightChildIndex < _count && _heap[rightChildIndex].Score < _heap[leftChildIndex].Score 
-                ? rightChildIndex : leftChildIndex;
-
-            if (item.Score <= _heap[minChildIndex].Score) break;
-            _heap[index] = _heap[minChildIndex];
-            index = minChildIndex;
-        }
-        _heap[index] = item;
     }
 }

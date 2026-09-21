@@ -44,8 +44,7 @@ public sealed class ExactSearchEngine
             };
 
             // Top-K 버퍼 삽입
-            // 참고: V2에서는 문자열 ID 대신 물리적 RecordIndex를 유지합니다. (52항 준수)
-            buffer.Add(i.ToString(), score, null); 
+            buffer.Add(1, i, score);
         }
     }
 }

@@ -5,11 +5,10 @@ using System.Runtime.InteropServices;
 using SqliteVector.Net.Catalog;
 
 /// <summary>
-/// G2: Segment Header
-/// .vec 파일의 최상단에 위치하며, 메모리 맵(MMap) 시 직접 Struct로 캐스팅하여 O(1)에 읽어냅니다.
+/// G2: Vector Segment Header (고정 128 바이트)
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-public readonly struct SegmentHeader
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 128)]
+public struct SegmentHeader
 {
     // "SVN2" (SqliteVector.Net V2) in ASCII Little Endian
     public const uint MagicNumber = 0x324E5653; 
@@ -60,12 +59,11 @@ public readonly struct SegmentHeader
         
         Capacity = capacity;
         
-        // Header 크기는 64바이트로 고정 (또는 sizeof(SegmentHeader))
-        long headerSize = 64; 
+        // Header 크기는 Struct Layout에 맞춰 128바이트 고정입니다.
+        long headerSize = 128; 
         DirectoryOffset = headerSize;
         
-        // Directory 크기 계산 (RecordEntry의 고정 사이즈 * Capacity)
-        // RecordDirectoryEntry 크기를 대략 32바이트로 산정
+        // Directory 크기 계산 (RecordDirectoryEntry 크기 32바이트 고정)
         long minVectorOffset = DirectoryOffset + (capacity * 32L);
         
         // 18항. Vector Region 시작 위치도 Alignment에 맞춰서 시작해야 함

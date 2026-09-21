@@ -48,7 +48,7 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
     /// G5 SIMD + G9 MMap 결합 스캔 루프
     /// 초당 기가바이트(GB/s) 단위로 메모리를 읽어들이며 L1/L2 캐시를 극한으로 활용합니다.
     /// </summary>
-    public void Search(ReadOnlySpan<float> query, DenseTopKBuffer buffer, HashSet<int>? deletedIndices = null)
+    public void Search(ReadOnlySpan<float> query, DenseTopKBuffer buffer, System.Collections.BitArray? liveSet = null)
     {
         int dimensions = _header.Dimensions;
         long regionOffset = _header.VectorRegionOffset;
@@ -57,18 +57,16 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
         
         for (int i = 0; i < capacity; i++)
         {
-            if (_directoryPtr[i].Flags != RecordFlags.Committed) continue;
+            // 물리적 레코드 무시: LiveSet(논리적 View)에 없으면 즉시 스킵 (과거 버전, 지워진 버전 방어)
+            if (liveSet != null && !liveSet.Get(i)) continue;
             
-            // G12: 논리적 삭제(Tombstone)된 레코드 건너뛰기
-            if (deletedIndices != null && deletedIndices.Contains(i)) continue;
+            // 만약 LiveSet이 없는 경우(V1 하위호환) 물리적 커밋 여부만 확인
+            if (liveSet == null && _directoryPtr[i].Flags != RecordFlags.Committed) continue;
 
-            // 벡터의 물리적 주소 계산 (Mmap 포인터 산술 연산)
+            // 벡터의 물리적 주소 계산
             byte* vectorPtr = _basePointer + regionOffset + (i * stride);
-            
-            // Pointer -> Span 변환 (Zero-Copy)
             ReadOnlySpan<float> target = new ReadOnlySpan<float>(vectorPtr, dimensions);
 
-            // SIMD 수학 연산 (VectorMath)
             float score = _metric switch
             {
                 VectorMetric.DotProduct => VectorMath.DotProduct(query, target),
@@ -77,9 +75,67 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
                 _ => throw new NotSupportedException()
             };
 
-            // ID는 추후 SQLite와 조인하기 위한 레코드 인덱스
-            buffer.Add(i.ToString(), score, null);
+            // O(N) 문자열 할당을 없애고 값(Primitive)만 버퍼에 추가
+            buffer.Add(1, i, score);
         }
+    }
+
+    /// <summary>
+    /// 멀티 코어를 100% 활용하는 병렬(Map-Reduce) SIMD 스캔
+    /// 스레드별 로컬 버퍼를 사용하여 Lock 경합을 완전히 제거했습니다.
+    /// </summary>
+    public void SearchParallel(ReadOnlySpan<float> query, DenseTopKBuffer globalBuffer, System.Collections.BitArray? liveSet = null)
+    {
+        int capacity = _header.Capacity;
+        int dimensions = _header.Dimensions;
+        long regionOffset = _header.VectorRegionOffset;
+        long stride = _header.VectorStride;
+        int topK = globalBuffer.Capacity;
+        
+        float[] queryArray = query.ToArray();
+        object syncRoot = new object();
+
+        var rangePartitioner = System.Collections.Concurrent.Partitioner.Create(0, capacity);
+
+        System.Threading.Tasks.Parallel.ForEach(
+            rangePartitioner,
+            () => new DenseTopKBuffer(topK),
+            (range, loopState, localBuffer) =>
+            {
+                ReadOnlySpan<float> localQuery = queryArray;
+                
+                for (int i = range.Item1; i < range.Item2; i++)
+                {
+                    if (liveSet != null && !liveSet.Get(i)) continue;
+                    if (liveSet == null && _directoryPtr[i].Flags != RecordFlags.Committed) continue;
+
+                    byte* vectorPtr = _basePointer + regionOffset + (i * stride);
+                    ReadOnlySpan<float> target = new ReadOnlySpan<float>(vectorPtr, dimensions);
+
+                    float score = _metric switch
+                    {
+                        VectorMetric.DotProduct => VectorMath.DotProduct(localQuery, target),
+                        VectorMetric.Cosine => VectorMath.CosineSimilarity(localQuery, target),
+                        VectorMetric.EuclideanSquared => -VectorMath.EuclideanDistanceSquared(localQuery, target),
+                        _ => throw new NotSupportedException()
+                    };
+
+                    localBuffer.Add(1, i, score);
+                }
+                return localBuffer;
+            },
+            (localBuffer) =>
+            {
+                lock (syncRoot)
+                {
+                    var results = localBuffer.GetSortedResults();
+                    foreach (var res in results)
+                    {
+                        globalBuffer.Add(res.SegmentId, res.RecordIndex, res.Score);
+                    }
+                }
+            }
+        );
     }
 
     public void Dispose()

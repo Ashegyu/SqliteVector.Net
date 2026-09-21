@@ -17,6 +17,7 @@ public class VectorDatabaseOptions
 public class VectorSearchOptions
 {
     public int TopK { get; set; } = 10;
+    public bool UseParallelSearch { get; set; } = false;
 }
 
 /// <summary>
@@ -91,23 +92,32 @@ public sealed class VectorDatabase : IAsyncDisposable
     public async Task<VectorSearchResult[]> SearchAsync(ReadOnlyMemory<float> query, VectorSearchOptions searchOptions)
     {
         var buffer = new DenseTopKBuffer(searchOptions.TopK);
-        
-        // G12: 삭제된 인덱스 가져오기 (O(D) 비용 - D는 삭제된 건수)
-        var deletedIndices = _catalog.GetDeletedRecordIndices(segmentId: 1);
+        System.Collections.BitArray liveSet;
 
-        // 1. Mmap SIMD 스캔 (SQLite 개입 완전 제로, 디스크 I/O 최적화)
-        _searchEngine.Search(query.Span, buffer, deletedIndices);
+        // G7.1 & G8: 검색 시점의 논리적 스냅샷(LiveSet) 캡처
+        lock (_syncRoot)
+        {
+            liveSet = _catalog.GetLiveSet(segmentId: 1, capacity: 100000);
+        }
+
+        // 1. Mmap SIMD 스캔 (Lock-free 병렬 스캔, Stale record는 LiveSet에 의해 완벽 차단됨)
+        if (searchOptions.UseParallelSearch)
+        {
+            _searchEngine.SearchParallel(query.Span, buffer, liveSet);
+        }
+        else
+        {
+            _searchEngine.Search(query.Span, buffer, liveSet);
+        }
         
-        var rawResults = buffer.GetSortedResults();
+        var rawResults = buffer.GetSortedResults(); // 반환 타입: Candidate[]
         var finalResults = new VectorSearchResult[rawResults.Length];
 
         // 2. 53항: Metadata Resolve (O(K))
-        // Top-K(예: 10개)로 좁혀진 결과에 대해서만 SQLite 조회를 수행하여 오버헤드 최소화
+        // SQLite 조회를 루프당 1회씩 10번(Top-K)만 수행합니다. 문자열 생성도 이 단계에서만 발생합니다.
         for (int i = 0; i < rawResults.Length; i++)
         {
-            int recordIndex = int.Parse(rawResults[i].Id);
-            var (externalId, metadata) = _catalog.ResolveMetadata(segmentId: 1, recordIndex: recordIndex);
-            
+            var (externalId, metadata) = _catalog.ResolveMetadata(segmentId: rawResults[i].SegmentId, recordIndex: rawResults[i].RecordIndex);
             finalResults[i] = new VectorSearchResult(externalId, rawResults[i].Score, metadata);
         }
 

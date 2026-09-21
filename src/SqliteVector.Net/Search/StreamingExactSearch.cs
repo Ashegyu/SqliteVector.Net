@@ -59,7 +59,7 @@ public sealed class StreamingExactSearch
                     _ => throw new NotSupportedException()
                 };
 
-                buffer.Add(i.ToString(), score, null);
+                buffer.Add(1, i, score);
             }
         }
         finally

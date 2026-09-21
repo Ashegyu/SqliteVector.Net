@@ -134,21 +134,23 @@ public sealed class SqliteCatalog : IDisposable
     }
 
     /// <summary>
-    /// G12: SIMD 검색 시 제외할 삭제/만료된 레코드 인덱스 해시셋을 반환합니다.
+    /// G7.1: Snapshot Visibility
+    /// 현재 카탈로그상에 살아있는(deleted=0) 최신 버전의 물리적 레코드 인덱스만 캡처합니다.
+    /// 과거 버전이나 삭제된 레코드는 이 BitArray에 포함되지 않습니다.
     /// </summary>
-    public HashSet<int> GetDeletedRecordIndices(long segmentId)
+    public System.Collections.BitArray GetLiveSet(long segmentId, int capacity)
     {
-        var deleted = new HashSet<int>();
+        var liveSet = new System.Collections.BitArray(capacity);
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = "SELECT record_index FROM vectors WHERE segment_id = @seg AND deleted = 1 AND record_index IS NOT NULL";
+        cmd.CommandText = "SELECT record_index FROM vectors WHERE segment_id = @seg AND deleted = 0 AND record_index IS NOT NULL";
         cmd.Parameters.AddWithValue("@seg", segmentId);
         
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            deleted.Add(reader.GetInt32(0));
+            liveSet.Set(reader.GetInt32(0), true);
         }
-        return deleted;
+        return liveSet;
     }
 
     public void Dispose()

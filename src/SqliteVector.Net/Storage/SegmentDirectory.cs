@@ -12,12 +12,10 @@ public enum RecordFlags : byte
 }
 
 /// <summary>
-/// G2: Segment Directory Entry
-/// 파일의 헤더 바로 뒤에 연속적으로 위치하는 디렉터리 영역의 단일 레코드입니다.
-/// Logical ID 매핑은 SQLite가 담당하므로, 여기서는 물리적 상태와 크래시 복구를 위한 메타데이터만 유지합니다.
+/// 단일 벡터의 상태를 나타내는 Directory Entry (고정 32 바이트)
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-public readonly struct RecordDirectoryEntry
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 32)]
+public struct RecordDirectoryEntry
 {
     public readonly int RecordIndex;
     public readonly long Generation;

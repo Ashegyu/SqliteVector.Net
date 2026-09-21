@@ -11,11 +11,13 @@ using Microsoft.Data.Sqlite;
 /// </summary>
 public sealed class SqliteCatalog : IDisposable
 {
+    private readonly string _dbPath;
     private readonly SqliteConnection _connection;
 
     public SqliteCatalog(string dbPath)
     {
         // 24항: SQLite Transaction 및 Crash Recovery 의존
+        _dbPath = dbPath;
         _connection = new SqliteConnection($"Data Source={dbPath}");
         _connection.Open();
         InitializeSchema();
@@ -29,36 +31,50 @@ public sealed class SqliteCatalog : IDisposable
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
 
+            CREATE TABLE IF NOT EXISTS database_state (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                current_revision INTEGER NOT NULL DEFAULT 1
+            );
+            
+            INSERT OR IGNORE INTO database_state (singleton, current_revision) VALUES (1, 1);
+
+            CREATE TABLE IF NOT EXISTS store_contract (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                format_version INTEGER NOT NULL,
+                dimensions INTEGER NOT NULL,
+                element_type INTEGER NOT NULL,
+                metric INTEGER NOT NULL,
+                normalization INTEGER NOT NULL,
+                embedding_space_id TEXT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS store_info (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS vectors (
-                vector_id INTEGER PRIMARY KEY,
-                external_id TEXT NOT NULL UNIQUE,
-                generation INTEGER NOT NULL,
-                segment_id INTEGER NULL,
-                record_index INTEGER NULL,
-                deleted INTEGER NOT NULL
+            CREATE TABLE IF NOT EXISTS segments (
+                segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                state INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
             );
 
-            CREATE TABLE IF NOT EXISTS vector_records (
+            CREATE TABLE IF NOT EXISTS vectors (
+                external_id TEXT PRIMARY KEY,
                 segment_id INTEGER NOT NULL,
                 record_index INTEGER NOT NULL,
-                external_id TEXT NOT NULL,
-                metadata TEXT NULL,
-                PRIMARY KEY (segment_id, record_index)
+                deleted INTEGER NOT NULL DEFAULT 0,
+                generation INTEGER NOT NULL DEFAULT 0
             );
 
-            CREATE TABLE IF NOT EXISTS segments (
-                segment_id INTEGER PRIMARY KEY,
-                generation INTEGER NOT NULL,
-                record_count INTEGER NOT NULL,
-                vector_count INTEGER NOT NULL,
-                state INTEGER NOT NULL,
-                file_name TEXT NOT NULL,
-                created_utc INTEGER NOT NULL
+            CREATE INDEX IF NOT EXISTS idx_vectors_segment ON vectors(segment_id, record_index);
+
+            CREATE TABLE IF NOT EXISTS vector_records (
+                segment_id INTEGER,
+                record_index INTEGER,
+                external_id TEXT NOT NULL,
+                metadata TEXT,
+                PRIMARY KEY (segment_id, record_index)
             );
 
             CREATE TABLE IF NOT EXISTS commits (
@@ -69,9 +85,11 @@ public sealed class SqliteCatalog : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    public static Action<string>? TestFaultInjector { get; set; }
+
     /// <summary>
     /// G7: Atomic Update Protocol의 핵심 단계
-    /// Segment에 Flush가 성공한 후, 물리적 주소를 카탈로그에 기록합니다. (Torn Write 방어)
+    /// Segment에 Flush가 끝난 뒤, 물리 주소를 카탈로그에 반영합니다. (Torn Write 방지)
     /// </summary>
     public void UpsertVectorLocation(
         SqliteTransaction transaction, 
@@ -81,6 +99,8 @@ public sealed class SqliteCatalog : IDisposable
         int recordIndex, 
         string? metadata)
     {
+        TestFaultInjector?.Invoke("BeforeCatalogUpsert");
+
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandText = @"
@@ -117,7 +137,9 @@ public sealed class SqliteCatalog : IDisposable
     /// </summary>
     public (string ExternalId, string? Metadata) ResolveMetadata(long segmentId, int recordIndex)
     {
-        using var cmd = _connection.CreateCommand();
+        using var conn = new SqliteConnection($"Data Source={_dbPath}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT external_id, metadata FROM vector_records WHERE segment_id = @seg AND record_index = @rec";
         cmd.Parameters.AddWithValue("@seg", segmentId);
         cmd.Parameters.AddWithValue("@rec", recordIndex);
@@ -131,15 +153,16 @@ public sealed class SqliteCatalog : IDisposable
             );
         }
         
-        throw new InvalidDataException($"해당 물리 레코드를 카탈로그에서 찾을 수 없습니다. (Seg:{segmentId}, Rec:{recordIndex})");
+        throw new InvalidOperationException($"Cannot resolve metadata for Segment {segmentId}, Record {recordIndex}");
     }
 
-    public void DeleteVectorLocation(SqliteTransaction transaction, string externalId)
+    public void DeleteVectorLocation(SqliteTransaction transaction, string externalId, long revision)
     {
         using var cmd = _connection.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandText = "UPDATE vectors SET deleted = 1 WHERE external_id = @id";
+        cmd.CommandText = "UPDATE vectors SET deleted = 1, generation = @gen WHERE external_id = @id";
         cmd.Parameters.AddWithValue("@id", externalId);
+        cmd.Parameters.AddWithValue("@gen", revision);
         cmd.ExecuteNonQuery();
     }
 
@@ -184,5 +207,74 @@ public sealed class SqliteCatalog : IDisposable
     public void Dispose()
     {
         _connection.Dispose();
+    }
+
+    public long AllocateNextRevision(SqliteTransaction tx)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+            UPDATE database_state SET current_revision = current_revision + 1 WHERE singleton = 1;
+            SELECT current_revision FROM database_state WHERE singleton = 1;
+        ";
+        return (long)cmd.ExecuteScalar()!;
+    }
+    
+    public long GetCurrentRevision()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT current_revision FROM database_state WHERE singleton = 1";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    public long CreateSegment(SqliteTransaction? tx = null)
+    {
+        using var cmd = _connection.CreateCommand();
+        if (tx != null) cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO segments (state) VALUES (0); SELECT last_insert_rowid();";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    public void SealSegment(long segmentId, SqliteTransaction? tx = null)
+    {
+        using var cmd = _connection.CreateCommand();
+        if (tx != null) cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE segments SET state = 1 WHERE segment_id = @id";
+        cmd.Parameters.AddWithValue("@id", segmentId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkSegmentDeleted(long segmentId, SqliteTransaction? tx = null)
+    {
+        using var cmd = _connection.CreateCommand();
+        if (tx != null) cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE segments SET state = 2 WHERE segment_id = @id";
+        cmd.Parameters.AddWithValue("@id", segmentId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public System.Collections.Generic.List<long> GetAllSegments()
+    {
+        var list = new System.Collections.Generic.List<long>();
+        using var cmd = _connection.CreateCommand();
+        // C4, D5: Load only Active (0) and Sealed (1) segments. Ignore Deleted (2).
+        cmd.CommandText = "SELECT segment_id FROM segments WHERE state IN (0, 1) ORDER BY segment_id ASC";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(reader.GetInt64(0));
+        }
+        return list;
+    }
+
+    public long GetActiveSegmentId()
+    {
+        using var cmd = _connection.CreateCommand();
+        // Assuming only one active segment exists (the latest one)
+        cmd.CommandText = "SELECT segment_id FROM segments WHERE state = 0 ORDER BY segment_id DESC LIMIT 1";
+        var result = cmd.ExecuteScalar();
+        if (result != null) return (long)result;
+        
+        return CreateSegment(); // Initialize first segment if empty
     }
 }

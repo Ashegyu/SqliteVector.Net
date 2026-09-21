@@ -7,38 +7,31 @@ using SqliteVector.Net.Catalog;
 /// <summary>
 /// G2: Vector Segment Header (고정 128 바이트)
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 128)]
+[StructLayout(LayoutKind.Explicit, Size = 128)]
 public struct SegmentHeader
 {
     // "SVN2" (SqliteVector.Net V2) in ASCII Little Endian
     public const uint MagicNumber = 0x324E5653; 
 
-    public readonly uint Magic;
-    public readonly int FormatVersion;
-    public readonly long SegmentId;
-    public readonly long Generation;
+    [FieldOffset(0)]  public readonly uint Magic;
+    [FieldOffset(4)]  public readonly int FormatVersion;
+    [FieldOffset(8)]  public readonly long SegmentId;
+    [FieldOffset(16)] public readonly long Generation;
     
-    public readonly int Dimensions;
-    public readonly VectorElementType ElementType;
+    [FieldOffset(24)] public readonly int Dimensions;
+    [FieldOffset(28)] public readonly VectorElementType ElementType;
     
-    /// <summary>
-    /// 순수 데이터 크기 (예: 1536차원 * 4바이트 = 6144)
-    /// </summary>
-    public readonly int PayloadBytes;
+    [FieldOffset(32)] public readonly int PayloadBytes;
     
-    /// <summary>
-    /// SIMD 정렬(Alignment) 패딩이 포함된 실제 점유 크기
-    /// (예: 차원이 100(400B)이고 Alignment가 64면 VectorStride는 448)
-    /// </summary>
-    public readonly int VectorStride;
+    [FieldOffset(36)] public readonly int VectorStride;
     
-    public readonly int Alignment;
+    [FieldOffset(40)] public readonly int Alignment;
     
-    public readonly int Capacity; // Segment가 가질 수 있는 최대 레코드 수
-    public readonly long DirectoryOffset;
-    public readonly long VectorRegionOffset;
+    [FieldOffset(44)] public readonly int Capacity; // Segment가 가질 수 있는 최대 레코드 수
+    [FieldOffset(48)] public readonly long DirectoryOffset;
+    [FieldOffset(56)] public readonly long VectorRegionOffset;
     
-    public readonly uint HeaderChecksum;
+    [FieldOffset(124)] public readonly uint HeaderChecksum;
 
     public SegmentHeader(
         long segmentId, long generation, int dimensions, 
@@ -69,7 +62,20 @@ public struct SegmentHeader
         // 18항. Vector Region 시작 위치도 Alignment에 맞춰서 시작해야 함
         VectorRegionOffset = AlignUpLong(minVectorOffset, alignment);
         
-        HeaderChecksum = 0; // TODO: V2.0 CRC32C 적용 시 구현
+        HeaderChecksum = 0;
+    }
+
+    public SegmentHeader WithChecksum()
+    {
+        SegmentHeader newHeader = this;
+        unsafe
+        {
+            uint* ptr = (uint*)&newHeader;
+            *(ptr + 31) = 0; // Clear checksum field (assuming it is the last 4 bytes of 128)
+            ReadOnlySpan<byte> bytes = new ReadOnlySpan<byte>(ptr, 124);
+            *(ptr + 31) = System.IO.Hashing.Crc32.HashToUInt32(bytes);
+        }
+        return newHeader;
     }
 
     /// <summary>

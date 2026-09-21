@@ -19,16 +19,20 @@ public sealed class StreamingExactSearch
     private readonly SegmentHeader _header;
     private readonly unsafe RecordDirectoryEntry* _directoryPtr;
     private readonly VectorMetric _metric;
+    private readonly bool _isNormalized;
+    public long SegmentId { get; }
 
-    public unsafe StreamingExactSearch(string filePath, SegmentHeader header, RecordDirectoryEntry* directoryPtr, VectorMetric metric)
+    public unsafe StreamingExactSearch(long segmentId, string filePath, SegmentHeader header, RecordDirectoryEntry* directoryPtr, VectorMetric metric, bool isNormalized)
     {
+        SegmentId = segmentId;
         _filePath = filePath;
         _header = header;
         _directoryPtr = directoryPtr;
         _metric = metric;
+        _isNormalized = isNormalized;
     }
 
-    public void Search(ReadOnlySpan<float> query, DenseTopKBuffer buffer, System.Collections.BitArray liveSet)
+    public unsafe void Search(ReadOnlySpan<float> query, DenseTopKBuffer buffer, System.Collections.BitArray? liveSet)
     {
         // OS 힌트: SequentialScan 플래그로 미리읽기(Prefetch) 유도
         using var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1024 * 1024, FileOptions.SequentialScan);
@@ -37,9 +41,9 @@ public sealed class StreamingExactSearch
         int capacity = _header.Capacity;
         int stride = _header.VectorStride;
         
-        // 4MB 단위로 크게 읽어들이기 위한 버퍼 임대
+        // 4MB 블록 단위로 읽어오기 위한 계산
         int blockSize = 4 * 1024 * 1024;
-        int vectorsPerBlock = blockSize / stride;
+        int vectorsPerBlock = Math.Max(1, blockSize / stride);
         int maxBytesToRead = vectorsPerBlock * stride;
         
         byte[] readBuffer = ArrayPool<byte>.Shared.Rent(maxBytesToRead); 
@@ -65,20 +69,29 @@ public sealed class StreamingExactSearch
                 {
                     int globalIndex = offset + i;
                     
-                    // LiveSet 필터링 (가장 최신의 물리 레코드만 검색)
-                    if (!liveSet.Get(globalIndex)) continue;
+                    // LiveSet 필터링 + 물리 레코드 상태 확인
+                    if (liveSet != null && !liveSet.Get(globalIndex)) continue;
+                    if (_directoryPtr[globalIndex].Flags != RecordFlags.Committed) continue;
 
                     var targetSpan = MemoryMarshal.Cast<byte, float>(new ReadOnlySpan<byte>(readBuffer, i * stride, _header.PayloadBytes));
 
-                    float score = _metric switch
+                    float score;
+                    if (_metric == VectorMetric.Cosine && _isNormalized)
                     {
-                        VectorMetric.DotProduct => VectorMath.DotProduct(query, targetSpan),
-                        VectorMetric.Cosine => VectorMath.CosineSimilarity(query, targetSpan), // 필요시 정규화 처리 추가
-                        VectorMetric.EuclideanSquared => -VectorMath.EuclideanDistanceSquared(query, targetSpan),
-                        _ => throw new NotSupportedException()
-                    };
+                        score = VectorMath.DotProduct(query, targetSpan);
+                    }
+                    else
+                    {
+                        score = _metric switch
+                        {
+                            VectorMetric.DotProduct => VectorMath.DotProduct(query, targetSpan),
+                            VectorMetric.Cosine => VectorMath.CosineSimilarity(query, targetSpan), 
+                            VectorMetric.EuclideanSquared => -VectorMath.EuclideanDistanceSquared(query, targetSpan),
+                            _ => throw new NotSupportedException()
+                        };
+                    }
 
-                    buffer.Add(1, globalIndex, score); // Segment=1 하드코딩
+                    buffer.Add(SegmentId, globalIndex, score);
                 }
             }
         }

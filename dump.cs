@@ -1,0 +1,3 @@
+using System;
+using Microsoft.Data.Sqlite;
+class Program { static void Main() { string dbPath = @"c:\Users\USER\Desktop\Work\SqliteVector.Net\tests\SqliteVector.Net.Tests\bin\Debug\net10.0-windows\TestDB\knowledge.db"; using (var conn = new SqliteConnection($"Data Source={dbPath}")) { conn.Open(); var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT * FROM segments"; var reader = cmd.ExecuteReader(); System.Console.WriteLine("--- segments ---"); while (reader.Read()) System.Console.WriteLine($"{reader[0]} {reader[1]}"); cmd.CommandText = "SELECT * FROM vectors"; reader = cmd.ExecuteReader(); System.Console.WriteLine("--- vectors ---"); while (reader.Read()) System.Console.WriteLine($"{reader[0]} {reader[1]} {reader[2]} {reader[3]}"); } } }

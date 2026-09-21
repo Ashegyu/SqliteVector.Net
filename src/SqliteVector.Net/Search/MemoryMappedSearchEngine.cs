@@ -13,6 +13,7 @@ using SqliteVector.Net.Storage;
 /// </summary>
 public sealed unsafe class MemoryMappedSearchEngine : IDisposable
 {
+    public long SegmentId { get; }
     public string FilePath { get; }
     public SegmentHeader Header { get; }
     public unsafe RecordDirectoryEntry* DirectoryPtr { get; }
@@ -25,8 +26,11 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
 
     private readonly bool _isNormalized;
 
-    public MemoryMappedSearchEngine(string filePath, VectorMetric metric, bool isNormalized = false)
+    private readonly long _fileLength; // Added to check bounds during access
+
+    public MemoryMappedSearchEngine(long segmentId, string filePath, VectorMetric metric, bool isNormalized = false, bool isActive = false)
     {
+        SegmentId = segmentId;
         FilePath = filePath;
         _metric = metric;
         _isNormalized = isNormalized;
@@ -34,43 +38,148 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
         // 1. 읽기 전용으로 열기 (Writer와 충돌하지 않도록 FileShare.ReadWrite 필수)
         var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         
-        // 2. 포인터 획득을 위해 맵핑
-        _mmf = MemoryMappedFile.CreateFromFile(fs, null, 0, MemoryMappedFileAccess.Read, HandleInheritability.None, false);
-        _accessor = _mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-        
-        byte* ptr = null;
-        _accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
-        _basePointer = ptr;
-
-        // 3. 헤더 읽기 및 강력한 검증 (Unsafe 메모리 접근 전 필수)
-        Header = MemoryMarshal.Read<SegmentHeader>(new ReadOnlySpan<byte>(_basePointer, Marshal.SizeOf<SegmentHeader>()));
-
-        if (Header.Magic != SegmentHeader.MagicNumber)
-            throw new InvalidDataException("Invalid Segment Magic Number");
+        try
+        {
+            long fileLength = fs.Length;
+            _fileLength = fileLength;
             
-        // G4: Unsafe MMap Validation
-        if (Header.FormatVersion != 2)
-            throw new InvalidDataException($"Unsupported FormatVersion: {Header.FormatVersion}");
-        if (Header.Dimensions <= 0)
-            throw new InvalidDataException($"Invalid Dimensions: {Header.Dimensions}");
-        if (Header.PayloadBytes != Header.Dimensions * 4)
-            throw new InvalidDataException($"Invalid PayloadBytes: {Header.PayloadBytes}");
-        if (Header.VectorStride < Header.PayloadBytes || Header.VectorStride % 64 != 0)
-            throw new InvalidDataException($"Invalid VectorStride: {Header.VectorStride}");
-        if (Header.DirectoryOffset < 128)
-            throw new InvalidDataException($"Invalid DirectoryOffset: {Header.DirectoryOffset}");
+            // 2. 헤더 먼저 FileStream으로 읽기 (안전한 Managed 방식)
+            if (fileLength < Marshal.SizeOf<SegmentHeader>())
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.TruncatedSegment, segmentId, filePath, "File is smaller than header size.");
+                
+            Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
+            fs.ReadExactly(headerBytes);
+            Header = MemoryMarshal.Read<SegmentHeader>(headerBytes);
             
-        long expectedMinSize = Header.VectorRegionOffset + ((long)Header.Capacity * Header.VectorStride);
-        if (_accessor.Capacity < expectedMinSize)
-            throw new InvalidDataException($"MMap capacity ({_accessor.Capacity}) is smaller than expected size ({expectedMinSize})");
+            // 3. 강력한 검증 (Unsafe 메모리 맵핑 전 필수)
+            uint expectedChecksum;
+            unsafe
+            {
+                fixed (byte* p = headerBytes)
+                {
+                    expectedChecksum = System.IO.Hashing.Crc32.HashToUInt32(new ReadOnlySpan<byte>(p, 124));
+                }
+            }
+            if (Header.HeaderChecksum != expectedChecksum && Header.HeaderChecksum != 0) // Allow 0 for backward compatibility during this transition
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.HeaderChecksum, segmentId, filePath, $"Header Checksum Mismatch. Expected {expectedChecksum}, got {Header.HeaderChecksum}");
 
-        // 4. 디렉터리 포인터 캐싱 (Zero-Copy)
-        DirectoryPtr = (RecordDirectoryEntry*)(_basePointer + Header.DirectoryOffset);
+            if (Header.Magic != SegmentHeader.MagicNumber)
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidMagic, segmentId, filePath, "Invalid Segment Magic Number");
+                
+            if (Header.FormatVersion != 2)
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, $"Unsupported FormatVersion: {Header.FormatVersion}");
+            
+            if (Header.SegmentId != segmentId)
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, $"Segment Identity Mismatch: Expected {segmentId}, got {Header.SegmentId}");
+                
+            if (Header.Dimensions <= 0 || Header.PayloadBytes != Header.Dimensions * 4)
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, $"Invalid Dimensions or PayloadBytes");
+                
+            if (Header.Alignment != 64 || Header.VectorStride < Header.PayloadBytes || Header.VectorStride % Header.Alignment != 0)
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, "Invalid Alignment or VectorStride");
+                
+            if (Header.DirectoryOffset < Marshal.SizeOf<SegmentHeader>())
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, "Invalid DirectoryOffset");
+                
+            long directoryEnd;
+            try
+            {
+                directoryEnd = checked(Header.DirectoryOffset + ((long)Header.Capacity * Marshal.SizeOf<RecordDirectoryEntry>()));
+                if (directoryEnd > Header.VectorRegionOffset)
+                    throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, "Directory overlaps VectorRegionOffset");
+            }
+            catch (OverflowException)
+            {
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, "Overflow in Directory offset calculation");
+            }
+                
+            if (Header.VectorRegionOffset % Header.Alignment != 0)
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, "VectorRegionOffset is not aligned");
+                
+            long expectedMinSize;
+            try
+            {
+                expectedMinSize = checked(Header.VectorRegionOffset + ((long)Header.Capacity * Header.VectorStride));
+            }
+            catch (OverflowException)
+            {
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidLayout, segmentId, filePath, "Overflow in Vector region offset calculation");
+            }
+            
+            // Truncated Sealed Segment 검사
+            if (!isActive && fileLength < expectedMinSize)
+            {
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.TruncatedSegment, segmentId, filePath, $"Sealed file size {fileLength} is smaller than expected {expectedMinSize}");
+            }
+
+            // 4. 이제 안전하게 MMap 생성 (fs 재사용)
+            // fileLength만큼만 매핑 (0을 주면 파일 전체)
+            _mmf = MemoryMappedFile.CreateFromFile(fs, null, 0, MemoryMappedFileAccess.Read, HandleInheritability.None, false);
+            _accessor = _mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+            
+            byte* ptr = null;
+            _accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
+            _basePointer = ptr;
+
+            // 5. 안전하게 검증된 오프셋을 사용해 포인터 캐스팅 (Zero-Copy)
+            DirectoryPtr = (RecordDirectoryEntry*)(_basePointer + Header.DirectoryOffset);
+            
+            // fs는 _mmf가 소유하게 되므로 여기서 Dispose하지 않음
+        }
+        catch
+        {
+            fs.Dispose();
+            throw;
+        }
+    }
+
+    public unsafe void ValidateLiveRecords(System.Collections.BitArray liveSet)
+    {
+        for (int i = 0; i < liveSet.Count; i++)
+        {
+            if (!liveSet[i]) continue;
+
+            var entry = DirectoryPtr[i];
+            if (entry.Flags != RecordFlags.Committed)
+            {
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(
+                    SqliteVector.Net.Exceptions.CorruptionKind.UnknownRecordFlags, 
+                    SegmentId, 
+                    FilePath, 
+                    $"Catalog references record {i} but physical flag is {entry.Flags}",
+                    i);
+            }
+
+            long offset = Header.VectorRegionOffset + ((long)i * Header.VectorStride);
+            
+            // 카탈로그가 참조하는 레코드(LiveSet=true)인데 파일이 잘려있다면 심각한 Corruption(Data Loss)이다.
+            if (offset + Header.PayloadBytes > _fileLength)
+            {
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(
+                    SqliteVector.Net.Exceptions.CorruptionKind.TruncatedSegment, 
+                    SegmentId, 
+                    FilePath, 
+                    $"Catalog references record {i} but it is truncated. Offset: {offset}, FileLength: {_fileLength}",
+                    i);
+            }
+
+            // Check CRC
+            ReadOnlySpan<byte> payload = new ReadOnlySpan<byte>(_basePointer + offset, Header.PayloadBytes);
+            uint crc = System.IO.Hashing.Crc32.HashToUInt32(payload);
+            if (crc != entry.PayloadCRC)
+            {
+                throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(
+                    SqliteVector.Net.Exceptions.CorruptionKind.PayloadChecksum, 
+                    SegmentId, 
+                    FilePath, 
+                    $"Payload CRC mismatch for record {i}. Expected {entry.PayloadCRC}, got {crc}",
+                    i);
+            }
+        }
     }
 
     /// <summary>
-    /// G5 SIMD + G9 MMap 결합 스캔 루프
-    /// 초당 기가바이트(GB/s) 단위로 메모리를 읽어들이며 L1/L2 캐시를 극한으로 활용합니다.
+    /// G5 SIMD + G9 MMap 단일 스레드 검색
     /// </summary>
     public void Search(ReadOnlySpan<float> query, DenseTopKBuffer buffer, System.Collections.BitArray? liveSet = null)
     {
@@ -79,15 +188,15 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
         long stride = Header.VectorStride;
         int capacity = Header.Capacity;
         
+        Console.WriteLine($"[Search] Engine for segment {SegmentId} searching {capacity} records (LiveSet={liveSet?.Count ?? 0}).");
+
         for (int i = 0; i < capacity; i++)
         {
-            // 물리적 레코드 무시: LiveSet(논리적 View)에 없으면 즉시 스킵 (과거 버전, 지워진 버전 방어)
+            // B6: Both logical (LiveSet) and physical visibility must be checked
             if (liveSet != null && !liveSet.Get(i)) continue;
-            
-            // 만약 LiveSet이 없는 경우(V1 하위호환) 물리적 커밋 여부만 확인
-            if (liveSet == null && DirectoryPtr[i].Flags != RecordFlags.Committed) continue;
+            if (DirectoryPtr[i].Flags != RecordFlags.Committed) continue;
 
-            // 벡터의 물리적 주소 계산
+            // 벡터 물리 주소 계산
             byte* vectorPtr = _basePointer + regionOffset + (i * stride);
             ReadOnlySpan<float> target = new ReadOnlySpan<float>(vectorPtr, dimensions);
 
@@ -99,14 +208,13 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
                 _ => throw new NotSupportedException()
             };
 
-            // O(N) 문자열 할당을 없애고 값(Primitive)만 버퍼에 추가
-            buffer.Add(1, i, score);
+            // O(N) 자원 할당 없이 구조체 배열에 삽입
+            buffer.Add(SegmentId, i, score);
         }
     }
 
     /// <summary>
-    /// 멀티 코어를 100% 활용하는 병렬(Map-Reduce) SIMD 스캔
-    /// 스레드별 로컬 버퍼를 사용하여 Lock 경합을 완전히 제거했습니다.
+    /// 멀티 코어를 100% 활용하는 병렬 SIMD 검색
     /// </summary>
     public void SearchParallel(ReadOnlySpan<float> query, DenseTopKBuffer globalBuffer, System.Collections.BitArray? liveSet = null)
     {
@@ -130,8 +238,9 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
                 
                 for (int i = range.Item1; i < range.Item2; i++)
                 {
+                    // B6: Both logical and physical visibility
                     if (liveSet != null && !liveSet.Get(i)) continue;
-                    if (liveSet == null && DirectoryPtr[i].Flags != RecordFlags.Committed) continue;
+                    if (DirectoryPtr[i].Flags != RecordFlags.Committed) continue;
 
                     byte* vectorPtr = _basePointer + regionOffset + (i * stride);
                     ReadOnlySpan<float> target = new ReadOnlySpan<float>(vectorPtr, dimensions);
@@ -144,7 +253,7 @@ public sealed unsafe class MemoryMappedSearchEngine : IDisposable
                         _ => throw new NotSupportedException()
                     };
 
-                    localBuffer.Add(1, i, score);
+                    localBuffer.Add(SegmentId, i, score);
                 }
                 return localBuffer;
             },

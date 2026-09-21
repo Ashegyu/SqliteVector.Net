@@ -44,7 +44,7 @@ public class MMapSearchEngineTests
             var buffer = new DenseTopKBuffer(3);
 
             // G9 MMap Engine 구동
-            using (var mmapEngine = new MemoryMappedSearchEngine(testFile, VectorMetric.DotProduct))
+            using (var mmapEngine = new MemoryMappedSearchEngine(1, testFile, VectorMetric.DotProduct))
             {
                 mmapEngine.Search(query, buffer);
             }

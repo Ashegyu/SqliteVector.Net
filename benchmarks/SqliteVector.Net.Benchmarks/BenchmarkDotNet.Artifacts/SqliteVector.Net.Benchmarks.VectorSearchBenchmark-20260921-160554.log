@@ -1,0 +1,246 @@
+// Validating benchmarks:
+// ***** BenchmarkRunner: Start   *****
+// ***** Found 2 benchmark(s) in total *****
+// ***** Building 1 exe(s) in Parallel: Start   *****
+// start dotnet  restore --nodeReuse:false /p:UseSharedCompilation=false /p:Deterministic=true /p:Optimize=true /p:ArtifactsPath="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1/" /p:OutDir="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0/" /p:OutputPath="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0/" /p:PublishDir="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\publish/" in C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1
+// command took 0.83 sec and exited with 0
+// start dotnet  build -c Release --no-restore --nodeReuse:false /p:UseSharedCompilation=false /p:Deterministic=true /p:Optimize=true /p:ArtifactsPath="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1/" /p:OutDir="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0/" /p:OutputPath="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0/" /p:PublishDir="C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\publish/" --output "C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0/" in C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1
+// command took 4.38 sec and exited with 0
+// ***** Done, took 00:00:05 (5.26 sec)   *****
+// Found 2 benchmarks:
+//   VectorSearchBenchmark.Search_SingleThread: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+//   VectorSearchBenchmark.Search_MultiThread: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: 고성능)
+// **************************
+// Benchmark: VectorSearchBenchmark.Search_SingleThread: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet SqliteVector.Net.Benchmarks-1.dll --anonymousPipes 1680 1684 --benchmarkName SqliteVector.Net.Benchmarks.VectorSearchBenchmark.Search_SingleThread --job ShortRun --benchmarkId 0 in C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.8
+// Runtime=.NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256
+// Job: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 130700.00 ns, 130.7000 us/op
+WorkloadJitting  1: 1 op, 23301500.00 ns, 23.3015 ms/op
+
+OverheadJitting  2: 16 op, 165900.00 ns, 10.3688 us/op
+WorkloadJitting  2: 16 op, 74856500.00 ns, 4.6785 ms/op
+
+WorkloadPilot    1: 16 op, 76142300.00 ns, 4.7589 ms/op
+WorkloadPilot    2: 32 op, 151624000.00 ns, 4.7383 ms/op
+WorkloadPilot    3: 64 op, 48721400.00 ns, 761.2719 us/op
+WorkloadPilot    4: 128 op, 72678100.00 ns, 567.7977 us/op
+WorkloadPilot    5: 256 op, 126258000.00 ns, 493.1953 us/op
+WorkloadPilot    6: 512 op, 249870900.00 ns, 488.0291 us/op
+WorkloadPilot    7: 1024 op, 476579000.00 ns, 465.4092 us/op
+WorkloadPilot    8: 2048 op, 994946500.00 ns, 485.8137 us/op
+
+OverheadWarmup   1: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadWarmup   2: 2048 op, 4000.00 ns, 1.9531 ns/op
+OverheadWarmup   3: 2048 op, 4000.00 ns, 1.9531 ns/op
+OverheadWarmup   4: 2048 op, 4000.00 ns, 1.9531 ns/op
+OverheadWarmup   5: 2048 op, 4000.00 ns, 1.9531 ns/op
+OverheadWarmup   6: 2048 op, 3900.00 ns, 1.9043 ns/op
+
+OverheadActual   1: 2048 op, 3800.00 ns, 1.8555 ns/op
+OverheadActual   2: 2048 op, 3900.00 ns, 1.9043 ns/op
+OverheadActual   3: 2048 op, 3800.00 ns, 1.8555 ns/op
+OverheadActual   4: 2048 op, 3900.00 ns, 1.9043 ns/op
+OverheadActual   5: 2048 op, 3900.00 ns, 1.9043 ns/op
+OverheadActual   6: 2048 op, 3800.00 ns, 1.8555 ns/op
+OverheadActual   7: 2048 op, 3800.00 ns, 1.8555 ns/op
+OverheadActual   8: 2048 op, 3600.00 ns, 1.7578 ns/op
+OverheadActual   9: 2048 op, 4100.00 ns, 2.0020 ns/op
+OverheadActual  10: 2048 op, 3900.00 ns, 1.9043 ns/op
+OverheadActual  11: 2048 op, 3700.00 ns, 1.8066 ns/op
+OverheadActual  12: 2048 op, 3900.00 ns, 1.9043 ns/op
+OverheadActual  13: 2048 op, 3800.00 ns, 1.8555 ns/op
+OverheadActual  14: 2048 op, 4000.00 ns, 1.9531 ns/op
+OverheadActual  15: 2048 op, 3900.00 ns, 1.9043 ns/op
+
+WorkloadWarmup   1: 2048 op, 1029044200.00 ns, 502.4630 us/op
+WorkloadWarmup   2: 2048 op, 1016353600.00 ns, 496.2664 us/op
+WorkloadWarmup   3: 2048 op, 1023077400.00 ns, 499.5495 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 1033388300.00 ns, 504.5841 us/op
+WorkloadActual   2: 2048 op, 982482000.00 ns, 479.7275 us/op
+WorkloadActual   3: 2048 op, 986979400.00 ns, 481.9235 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 1033384400.00 ns, 504.5822 us/op
+WorkloadResult   2: 2048 op, 982478100.00 ns, 479.7256 us/op
+WorkloadResult   3: 2048 op, 986975500.00 ns, 481.9216 us/op
+// GC:  1 0 0 28082176 2048
+// Threading:  0 0 2048
+
+// AfterAll
+// Benchmark Process 49120 has exited with code 0.
+
+Mean = 488.743 μs, StdErr = 7.945 μs (1.63%), N = 3, StdDev = 13.761 μs
+Min = 479.726 μs, Q1 = 480.824 μs, Median = 481.922 μs, Q3 = 493.252 μs, Max = 504.582 μs
+IQR = 12.428 μs, LowerFence = 462.181 μs, UpperFence = 511.894 μs
+ConfidenceInterval = [237.693 μs; 739.793 μs] (CI 99.9%), Margin = 251.050 μs (51.37% of Mean)
+Skewness = 0.37, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 1 (50.0%) benchmark(s) to run. Estimated finish 2026-09-21 16:06 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: 고성능)
+// **************************
+// Benchmark: VectorSearchBenchmark.Search_MultiThread: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet SqliteVector.Net.Benchmarks-1.dll --anonymousPipes 1744 1676 --benchmarkName SqliteVector.Net.Benchmarks.VectorSearchBenchmark.Search_MultiThread --job ShortRun --benchmarkId 1 in C:\Users\USER\Desktop\Work\SqliteVector.Net\benchmarks\SqliteVector.Net.Benchmarks\bin\Release\net10.0-windows\SqliteVector.Net.Benchmarks-1\bin\Release\net10.0-Windows7.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.8
+// Runtime=.NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2+BMI1+BMI2+F16C+FMA+LZCNT+MOVBE,AVX,SSE3+SSSE3+SSE4.1+SSE4.2+POPCNT,X86Base+SSE+SSE2,AES+PCLMUL,AvxVnni,SERIALIZE VectorSize=256
+// Job: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 124600.00 ns, 124.6000 us/op
+WorkloadJitting  1: 1 op, 14959600.00 ns, 14.9596 ms/op
+
+OverheadJitting  2: 16 op, 188000.00 ns, 11.7500 us/op
+WorkloadJitting  2: 16 op, 21673300.00 ns, 1.3546 ms/op
+
+WorkloadPilot    1: 16 op, 14660000.00 ns, 916.2500 us/op
+WorkloadPilot    2: 32 op, 26573400.00 ns, 830.4188 us/op
+WorkloadPilot    3: 64 op, 50993600.00 ns, 796.7750 us/op
+WorkloadPilot    4: 128 op, 107767000.00 ns, 841.9297 us/op
+WorkloadPilot    5: 256 op, 208386600.00 ns, 814.0102 us/op
+WorkloadPilot    6: 512 op, 386100600.00 ns, 754.1027 us/op
+WorkloadPilot    7: 1024 op, 220776800.00 ns, 215.6023 us/op
+WorkloadPilot    8: 2048 op, 428555000.00 ns, 209.2554 us/op
+WorkloadPilot    9: 4096 op, 860916400.00 ns, 210.1847 us/op
+
+OverheadWarmup   1: 4096 op, 9000.00 ns, 2.1973 ns/op
+OverheadWarmup   2: 4096 op, 7300.00 ns, 1.7822 ns/op
+OverheadWarmup   3: 4096 op, 7400.00 ns, 1.8066 ns/op
+OverheadWarmup   4: 4096 op, 7700.00 ns, 1.8799 ns/op
+OverheadWarmup   5: 4096 op, 7200.00 ns, 1.7578 ns/op
+OverheadWarmup   6: 4096 op, 7100.00 ns, 1.7334 ns/op
+OverheadWarmup   7: 4096 op, 7100.00 ns, 1.7334 ns/op
+OverheadWarmup   8: 4096 op, 7700.00 ns, 1.8799 ns/op
+
+OverheadActual   1: 4096 op, 10600.00 ns, 2.5879 ns/op
+OverheadActual   2: 4096 op, 7400.00 ns, 1.8066 ns/op
+OverheadActual   3: 4096 op, 7000.00 ns, 1.7090 ns/op
+OverheadActual   4: 4096 op, 7300.00 ns, 1.7822 ns/op
+OverheadActual   5: 4096 op, 7000.00 ns, 1.7090 ns/op
+OverheadActual   6: 4096 op, 7400.00 ns, 1.8066 ns/op
+OverheadActual   7: 4096 op, 7200.00 ns, 1.7578 ns/op
+OverheadActual   8: 4096 op, 7300.00 ns, 1.7822 ns/op
+OverheadActual   9: 4096 op, 8000.00 ns, 1.9531 ns/op
+OverheadActual  10: 4096 op, 7900.00 ns, 1.9287 ns/op
+OverheadActual  11: 4096 op, 7600.00 ns, 1.8555 ns/op
+OverheadActual  12: 4096 op, 7300.00 ns, 1.7822 ns/op
+OverheadActual  13: 4096 op, 7100.00 ns, 1.7334 ns/op
+OverheadActual  14: 4096 op, 8200.00 ns, 2.0020 ns/op
+OverheadActual  15: 4096 op, 9300.00 ns, 2.2705 ns/op
+OverheadActual  16: 4096 op, 7100.00 ns, 1.7334 ns/op
+OverheadActual  17: 4096 op, 7000.00 ns, 1.7090 ns/op
+OverheadActual  18: 4096 op, 6900.00 ns, 1.6846 ns/op
+OverheadActual  19: 4096 op, 7300.00 ns, 1.7822 ns/op
+
+WorkloadWarmup   1: 4096 op, 856870400.00 ns, 209.1969 us/op
+WorkloadWarmup   2: 4096 op, 852439300.00 ns, 208.1151 us/op
+WorkloadWarmup   3: 4096 op, 850609600.00 ns, 207.6684 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 4096 op, 853419600.00 ns, 208.3544 us/op
+WorkloadActual   2: 4096 op, 828927600.00 ns, 202.3749 us/op
+WorkloadActual   3: 4096 op, 911213000.00 ns, 222.4641 us/op
+
+// AfterActualRun
+WorkloadResult   1: 4096 op, 853412300.00 ns, 208.3526 us/op
+WorkloadResult   2: 4096 op, 828920300.00 ns, 202.3731 us/op
+WorkloadResult   3: 4096 op, 911205700.00 ns, 222.4623 us/op
+// GC:  6 0 0 113621712 4096
+// Threading:  50180 256 4096
+
+// AfterAll
+// Benchmark Process 45944 has exited with code 0.
+
+Mean = 211.063 μs, StdErr = 5.955 μs (2.82%), N = 3, StdDev = 10.315 μs
+Min = 202.373 μs, Q1 = 205.363 μs, Median = 208.353 μs, Q3 = 215.407 μs, Max = 222.462 μs
+IQR = 10.045 μs, LowerFence = 190.296 μs, UpperFence = 230.474 μs
+ConfidenceInterval = [22.876 μs; 399.250 μs] (CI 99.9%), Margin = 188.187 μs (89.16% of Mean)
+Skewness = 0.24, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 0 (0.0%) benchmark(s) to run. Estimated finish 2026-09-21 16:06 (0h 0m from now) **
+Successfully reverted power plan (GUID: 381b4222-f694-41f0-9685-ff5bb260df2e FriendlyName: 균형 조정)
+// ***** BenchmarkRunner: Finish  *****
+
+// * Export *
+  BenchmarkDotNet.Artifacts\results\SqliteVector.Net.Benchmarks.VectorSearchBenchmark-report.csv
+  BenchmarkDotNet.Artifacts\results\SqliteVector.Net.Benchmarks.VectorSearchBenchmark-report-github.md
+  BenchmarkDotNet.Artifacts\results\SqliteVector.Net.Benchmarks.VectorSearchBenchmark-report.html
+
+// * Detailed results *
+VectorSearchBenchmark.Search_SingleThread: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+Runtime = .NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3; GC = Concurrent Workstation
+Mean = 488.743 μs, StdErr = 7.945 μs (1.63%), N = 3, StdDev = 13.761 μs
+Min = 479.726 μs, Q1 = 480.824 μs, Median = 481.922 μs, Q3 = 493.252 μs, Max = 504.582 μs
+IQR = 12.428 μs, LowerFence = 462.181 μs, UpperFence = 511.894 μs
+ConfidenceInterval = [237.693 μs; 739.793 μs] (CI 99.9%), Margin = 251.050 μs (51.37% of Mean)
+Skewness = 0.37, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[479.631 μs ; 504.677 μs) | @@@
+---------------------------------------------------
+
+VectorSearchBenchmark.Search_MultiThread: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+Runtime = .NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3; GC = Concurrent Workstation
+Mean = 211.063 μs, StdErr = 5.955 μs (2.82%), N = 3, StdDev = 10.315 μs
+Min = 202.373 μs, Q1 = 205.363 μs, Median = 208.353 μs, Q3 = 215.407 μs, Max = 222.462 μs
+IQR = 10.045 μs, LowerFence = 190.296 μs, UpperFence = 230.474 μs
+ConfidenceInterval = [22.876 μs; 399.250 μs] (CI 99.9%), Margin = 188.187 μs (89.16% of Mean)
+Skewness = 0.24, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[195.976 μs ; 214.750 μs) | @@
+[214.750 μs ; 231.850 μs) | @
+---------------------------------------------------
+
+// * Summary *
+
+BenchmarkDotNet v0.15.8, Windows 11 (10.0.26200.9457/25H2/2025Update/HudsonValley2)
+Intel Core Ultra 7 270K Plus 3.70GHz, 1 CPU, 24 logical and 24 physical cores
+.NET SDK 10.0.401
+  [Host]   : .NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3
+  ShortRun : .NET 10.0.12 (10.0.12, 10.0.1226.42308), X64 RyuJIT x86-64-v3
+
+Job=ShortRun  IterationCount=3  LaunchCount=1  
+WarmupCount=3  
+
+| Method              | Mean     | Error    | StdDev   | Ratio | RatioSD | Gen0   | Allocated | Alloc Ratio |
+|-------------------- |---------:|---------:|---------:|------:|--------:|-------:|----------:|------------:|
+| Search_SingleThread | 488.7 μs | 251.1 μs | 13.76 μs |  1.00 |    0.03 | 0.4883 |  13.39 KB |        1.00 |
+| Search_MultiThread  | 211.1 μs | 188.2 μs | 10.32 μs |  0.43 |    0.02 | 1.4648 |  27.09 KB |        2.02 |
+
+// * Legends *
+  Mean        : Arithmetic mean of all measurements
+  Error       : Half of 99.9% confidence interval
+  StdDev      : Standard deviation of all measurements
+  Ratio       : Mean of the ratio distribution ([Current]/[Baseline])
+  RatioSD     : Standard deviation of the ratio distribution ([Current]/[Baseline])
+  Gen0        : GC Generation 0 collects per 1000 operations
+  Allocated   : Allocated memory per single operation (managed only, inclusive, 1KB = 1024B)
+  Alloc Ratio : Allocated memory ratio distribution ([Current]/[Baseline])
+  1 μs        : 1 Microsecond (0.000001 sec)
+
+// * Diagnostic Output - MemoryDiagnoser *
+
+
+// ***** BenchmarkRunner: End *****
+Run time: 00:00:43 (43.28 sec), executed benchmarks: 2
+
+Global total time: 00:00:48 (48.85 sec), executed benchmarks: 2
+// * Artifacts cleanup *
+Artifacts cleanup is finished

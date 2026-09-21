@@ -2,7 +2,7 @@
 <html lang='en'>
 <head>
 <meta charset='utf-8' />
-<title>SqliteVector.Net.Benchmarks.VectorSearchBenchmark-20260921-143823</title>
+<title>SqliteVector.Net.Benchmarks.VectorSearchBenchmark-20260921-171250</title>
 
 <style type="text/css">
 	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
@@ -24,10 +24,16 @@ WarmupCount=3
 </code></pre>
 
 <table>
-<thead><tr><th>Method       </th><th>Mean</th><th>Error</th><th>StdDev</th><th>Ratio</th><th>Gen0</th><th>Allocated</th><th>Alloc Ratio</th>
+<thead><tr><th>Method                              </th><th>Dimensions</th><th>Mean</th><th>Error</th><th>StdDev</th><th>Ratio</th><th>RatioSD</th><th>Gen0</th><th>Allocated</th><th>Alloc Ratio</th>
 </tr>
-</thead><tbody><tr><td>Search_SingleThread</td><td>1.868 ms</td><td>0.3839 ms</td><td>0.0210 ms</td><td>1.00</td><td>15.6250</td><td>317.85 KB</td><td>1.00</td>
-</tr><tr><td>Search_MultiThread</td><td>1.720 ms</td><td>0.2067 ms</td><td>0.0113 ms</td><td>0.92</td><td>15.6250</td><td>327.05 KB</td><td>1.03</td>
+</thead><tbody><tr><td>Search_SingleThread</td><td>384</td><td>517.8 &mu;s</td><td>120.96 &mu;s</td><td>6.63 &mu;s</td><td>1.00</td><td>0.02</td><td>-</td><td>13.32 KB</td><td>1.00</td>
+</tr><tr><td>Search_MultiThread</td><td>384</td><td>212.4 &mu;s</td><td>21.89 &mu;s</td><td>1.20 &mu;s</td><td>0.41</td><td>0.00</td><td>1.4648</td><td>27.02 KB</td><td>2.03</td>
+</tr><tr><td>MaxLoad_100_Concurrent_SingleThread_Engine</td><td>384</td><td>448.9 &mu;s</td><td>32.30 &mu;s</td><td>1.77 &mu;s</td><td>0.87</td><td>0.01</td><td>-</td><td>13.33 KB</td><td>1.00</td>
+</tr><tr><td>MaxLoad_100_Concurrent_MultiThread_Engine</td><td>384</td><td>215.5 &mu;s</td><td>11.15 &mu;s</td><td>0.61 &mu;s</td><td>0.42</td><td>0.00</td><td>1.2500</td><td>27.43 KB</td><td>2.06</td>
+</tr><tr><td>Search_SingleThread</td><td>1536</td><td>2,925.2 &mu;s</td><td>193.74 &mu;s</td><td>10.62 &mu;s</td><td>1.00</td><td>0.00</td><td>-</td><td>13.32 KB</td><td>1.00</td>
+</tr><tr><td>Search_MultiThread</td><td>1536</td><td>915.3 &mu;s</td><td>123.24 &mu;s</td><td>6.76 &mu;s</td><td>0.31</td><td>0.00</td><td>0.9766</td><td>31.05 KB</td><td>2.33</td>
+</tr><tr><td>MaxLoad_100_Concurrent_SingleThread_Engine</td><td>1536</td><td>2,844.8 &mu;s</td><td>872.60 &mu;s</td><td>47.83 &mu;s</td><td>0.97</td><td>0.01</td><td>-</td><td>13.33 KB</td><td>1.00</td>
+</tr><tr><td>MaxLoad_100_Concurrent_MultiThread_Engine</td><td>1536</td><td>915.7 &mu;s</td><td>489.92 &mu;s</td><td>26.85 &mu;s</td><td>0.31</td><td>0.01</td><td>-</td><td>30.86 KB</td><td>2.32</td>
 </tr></tbody></table>
 </body>
 </html>

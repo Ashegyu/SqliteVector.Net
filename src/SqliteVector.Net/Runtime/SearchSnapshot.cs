@@ -12,17 +12,17 @@ public sealed class SearchSnapshot : IDisposable
 {
     public long Generation { get; }
     
-    // G8: 읽기 전용 세그먼트 스냅샷
-    public MemoryMappedSearchEngine MMapEngine { get; } 
-    public System.Collections.BitArray LiveSet { get; }
+    // C4: 스냅샷이 여러 세그먼트 엔진들을 소유함
+    public System.Collections.Generic.IReadOnlyList<MemoryMappedSearchEngine> Engines { get; } 
+    public System.Collections.Generic.IReadOnlyDictionary<long, System.Collections.BitArray> LiveSets { get; }
     
     private int _refCount = 1;
 
-    public SearchSnapshot(long generation, MemoryMappedSearchEngine engine, System.Collections.BitArray liveSet)
+    public SearchSnapshot(long generation, System.Collections.Generic.IReadOnlyList<MemoryMappedSearchEngine> engines, System.Collections.Generic.IReadOnlyDictionary<long, System.Collections.BitArray> liveSets)
     {
         Generation = generation;
-        MMapEngine = engine;
-        LiveSet = liveSet;
+        Engines = engines;
+        LiveSets = liveSets;
     }
 
     public bool TryAddReference()
@@ -46,8 +46,11 @@ public sealed class SearchSnapshot : IDisposable
     {
         if (Interlocked.Decrement(ref _refCount) == 0)
         {
-            // 모든 참조가 해제되면 MMap 자원 해제
-            MMapEngine.Dispose();
+            // 참조가 0이 되면 모든 소유한 엔진의 참조 카운트를 감소
+            foreach (var engine in Engines)
+            {
+                engine.Release();
+            }
         }
     }
 }

@@ -6,6 +6,7 @@
     <Project Path="src/SqliteVector.Net/SqliteVector.Net.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ChildRunner/ChildRunner.csproj" />
     <Project Path="tests/SqliteVector.Net.Tests/SqliteVector.Net.Tests.csproj" />
   </Folder>
 </Solution>

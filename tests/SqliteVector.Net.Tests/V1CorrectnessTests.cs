@@ -78,7 +78,7 @@ public class V1CorrectnessTests : IDisposable
 
     public void Dispose()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        if (Directory.Exists(_testDir)) Directory.Delete(_testDir, true);
+        try { if (File.Exists("segment_000001.vec")) File.Delete("segment_000001.vec"); } catch {}
+        try { if (File.Exists("knowledge.db")) File.Delete("knowledge.db"); } catch {}
     }
 }

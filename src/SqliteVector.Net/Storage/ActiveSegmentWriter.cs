@@ -13,6 +13,7 @@ using System.Runtime.InteropServices;
 public sealed class ActiveSegmentWriter : IDisposable
 {
     private readonly FileStream _fileStream;
+    public static Action<string>? TestFaultInjector { get; set; }
     private readonly SegmentHeader _header;
     private readonly object _writeLock = new();
     
@@ -24,7 +25,7 @@ public sealed class ActiveSegmentWriter : IDisposable
 
     public ActiveSegmentWriter(string filePath, SegmentHeader header)
     {
-        _header = header;
+        _header = header.WithChecksum();
         
         // G14 & 24항: FileOptions.WriteThrough를 사용하여 OS 캐시를 우회하고 디스크에 강제 동기화 (Durability)
         // Reopen 복구를 지원하기 위해 OpenOrCreate 사용
@@ -32,45 +33,51 @@ public sealed class ActiveSegmentWriter : IDisposable
             filePath, 
             FileMode.OpenOrCreate, 
             FileAccess.ReadWrite, 
-            FileShare.ReadWrite, 
-            bufferSize: 4096, 
-            FileOptions.None);
-            
-        InitializeSegment();
-    }
+            FileShare.ReadWrite,
+            bufferSize: 4096,
+            options: FileOptions.WriteThrough);
 
-    private void InitializeSegment()
-    {
-        bool isNewFile = _fileStream.Length == 0;
+        try
+        {
+            bool isNewFile = _fileStream.Length == 0;
 
-        if (isNewFile)
-        {
-            // 신규 파일인 경우: 헤더 작성 및 14항 Layout 공간 예약
-            Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
-            MemoryMarshal.Write(headerBytes, in _header);
-            
-            _fileStream.Seek(0, SeekOrigin.Begin);
-            _fileStream.Write(headerBytes);
-            
-            long totalSize = _header.VectorRegionOffset + ((long)_header.Capacity * _header.VectorStride);
-            _fileStream.SetLength(totalSize);
-            _fileStream.Flush(flushToDisk: true);
-        }
-        else
-        {
-            // 기존 파일인 경우: 헤더를 덮어쓰지 않고 읽어서 검증 (Safe Reopen)
-            _fileStream.Seek(0, SeekOrigin.Begin);
-            Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
-            _fileStream.ReadExactly(headerBytes);
-            var existingHeader = MemoryMarshal.Read<SegmentHeader>(headerBytes);
-            
-            if (existingHeader.Magic != SegmentHeader.MagicNumber)
-                throw new InvalidDataException("Invalid Segment Magic Number");
-            if (existingHeader.Dimensions != _header.Dimensions)
-                throw new InvalidOperationException($"Dimension mismatch. Expected {_header.Dimensions}, got {existingHeader.Dimensions}");
+            if (isNewFile)
+            {
+                // 신규 생성 시: 헤더 작성 및 14조 Layout 선할당
+                Span<byte> headerBytes = stackalloc byte[Marshal.SizeOf<SegmentHeader>()];
+                MemoryMarshal.Write(headerBytes, in _header);
                 
-            // 복구(Recovery): 디렉터리를 스캔하여 다음 빈 레코드 인덱스 찾기
-            _currentRecordCount = FindNextFreeRecordIndex();
+                _fileStream.Seek(0, SeekOrigin.Begin);
+                _fileStream.Write(headerBytes);
+                
+                // MMap 성능을 위해 Capacity만큼 파일 크기 선할당
+                long totalSize = _header.VectorRegionOffset + ((long)_header.Capacity * _header.VectorStride);
+                _fileStream.SetLength(totalSize); // May throw IOException if disk full
+                
+                _fileStream.Flush(true); // WriteThrough라도 메타데이터 변경(크기)은 Flush 필요
+                _currentRecordCount = 0;
+            }
+            else
+            {
+                // 기존 파일 열기: 헤더 검증
+                byte[] headerBytes = new byte[Marshal.SizeOf<SegmentHeader>()];
+                _fileStream.Seek(0, SeekOrigin.Begin);
+                _fileStream.ReadExactly(headerBytes);
+                var existingHeader = MemoryMarshal.Read<SegmentHeader>(headerBytes);
+                
+                if (existingHeader.Magic != SegmentHeader.MagicNumber)
+                    throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.InvalidMagic, _header.SegmentId, filePath, "Invalid Segment Magic Number");
+                if (existingHeader.Dimensions != _header.Dimensions)
+                    throw new SqliteVector.Net.Exceptions.VectorStoreCorruptionException(SqliteVector.Net.Exceptions.CorruptionKind.ContractMismatch, _header.SegmentId, filePath, $"Dimension mismatch. Expected {_header.Dimensions}, got {existingHeader.Dimensions}");
+                    
+                // 복구(Recovery): 디렉터리를 스캔하여 다음 빈 레코드 인덱스 찾기
+                _currentRecordCount = FindNextFreeRecordIndex();
+            }
+        }
+        catch
+        {
+            _fileStream.Dispose();
+            throw;
         }
     }
 
@@ -144,6 +151,8 @@ public sealed class ActiveSegmentWriter : IDisposable
             
             // 5. Payload Flush (디렉터리를 업데이트하기 전에 벡터가 완벽히 기록됨을 디스크 수준에서 보장)
             _fileStream.Flush(flushToDisk: true);
+            
+            TestFaultInjector?.Invoke("BeforeDirectoryWrite");
             
             // 6. Directory Entry (물리적 기록 완료 마킹)
             var entry = new RecordDirectoryEntry(recordIndex, generation, crc, RecordFlags.Committed);

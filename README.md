@@ -44,9 +44,11 @@ Our core design philosophy is to completely avoid garbage collection during the 
 
 ### **Large-Scale Throughput (1 Million Vectors)**
 
-To prove that our `MemoryMappedSearchEngine` does not rely on CPU L3 cache illusions, we benchmarked the pure search engine directly against large datasets up to **~6 GB (1M x 1536 dim)**. The multi-threaded exact scan maintains an astonishing **~71.0 GB/s** effective scan throughput. This proves that the engine flawlessly hits the physical limits of modern dual-channel DDR5 memory bandwidth without algorithmic degradation, fully saturating the hardware limit. 
+To prove that our `MemoryMappedSearchEngine` does not rely on CPU L3 cache illusions, we benchmarked the pure search engine directly against large datasets up to **~6 GB (1M x 1536 dim)**. The multi-threaded exact scan maintains an astonishing **~71.0 GB/s** effective scan throughput. 
 
-Furthermore, we align perfectly against the official benchmark workload of native engines like `sqlite-vector` (N=1M, D=768, K=20, Cosine). On this specific workload, our C# engine achieves a staggering **41.57 ms** multi-threaded latency.
+Notice the stable scaling across dimensions (`D384: ~67.6 GB/s`, `D768: ~68.8 GB/s`, `D1536: ~71.0 GB/s`). This consistency is a strong indicator that the compute and runtime overhead (.NET JIT/SIMD) is sufficiently small, making the system memory bandwidth the dominant bottleneck.
+
+Furthermore, we align our benchmark perfectly against the official workload of popular native vector engines (N=1M, D=768, K=20, Cosine). While traditional engines reading via SQLite row/page traversal often incur significant I/O overhead, our architecture decouples the vector data plane into a contiguous, memory-mapped file allowing direct SIMD scanning without SQLite intervention. On this specific workload, our C# engine achieves a staggering **41.57 ms** multi-threaded latency.
 
 **Benchmark Conditions:**
 - **Hardware:** Intel Core Ultra 7 (AVX2/AVX-512)
@@ -159,9 +161,11 @@ SqliteVector.NET v2.0은 극한의 적대적 조건(Adversarial conditions), 스
 
 ### **대규모 스케일 대역폭 검증 (100만 개 벡터)**
 
-데이터셋이 CPU L3 캐시 크기를 초과할 때 발생하는 병목을 확인하기 위해, 순수 검색 엔진(`MemoryMappedSearchEngine`)을 최대 **약 6 GB (1M x 1536 dim)** 크기의 거대 데이터셋에 직접 구동했습니다. 측정 결과, 다중 스레드 스캔에서 **~71.0 GB/s**의 실효 스캔 대역폭(Effective scan throughput)을 그대로 유지해냈습니다. 이는 엔진이 캐시의 도움 없이도 최신 듀얼 채널 DDR5 물리 메모리 대역폭의 한계치를 완벽하게 끌어다 쓰고 있으며, 데이터가 커져도 알고리즘적 성능 저하가 전혀 없음을 증명합니다.
+데이터셋이 CPU L3 캐시 크기를 초과할 때 발생하는 병목을 확인하기 위해, 순수 검색 엔진(`MemoryMappedSearchEngine`)을 최대 **약 6 GB (1M x 1536 dim)** 크기의 거대 데이터셋에 직접 구동했습니다. 측정 결과, 다중 스레드 스캔에서 **~71.0 GB/s**의 실효 스캔 대역폭(Effective scan throughput)을 그대로 유지해냈습니다. 
 
-또한, 네이티브 C 엔진인 `sqlite-vector`의 공식 벤치마크 워크로드(N=1M, D=768, K=20, Cosine)와 동일한 조건으로 측정한 결과, 순수 C# 엔진임에도 불구하고 다중 스레드 기준 **41.57 ms** 라는 경이로운 검색 속도를 기록했습니다.
+차원 수가 증가함에 따라 유지되는 안정적인 확장성(`D384: ~67.6 GB/s`, `D768: ~68.8 GB/s`, `D1536: ~71.0 GB/s`)에 주목해 주세요. 이는 런타임 계산 오버헤드(.NET JIT/SIMD)가 충분히 작아져서 시스템 메모리 공급 속도가 지배적인 병목(Memory-bandwidth-bound)으로 작용하고 있다는 강력한 증거입니다.
+
+또한, 네이티브 벡터 엔진들의 공식 벤치마크 워크로드(N=1M, D=768, K=20, Cosine)와 동일한 조건으로 측정했습니다. SQLite의 행/페이지 순회를 거쳐 읽는 전통적인 방식은 막대한 I/O 오버헤드를 발생시키지만, 본 엔진은 벡터 데이터 플레인을 연속적인(contiguous) 메모리 맵(Memory-Mapped) 파일로 분리하여 SQLite의 개입 없이 직접 SIMD 스캔을 수행합니다. 이러한 데이터 플레인 아키텍처의 우위를 바탕으로, 해당 워크로드에서 다중 스레드 기준 **41.57 ms** 라는 쾌속 검색 속도를 기록했습니다.
 
 **벤치마크 조건 (Benchmark Conditions):**
 - **하드웨어 (Hardware):** Intel Core Ultra 7 (AVX2/AVX-512)

@@ -31,7 +31,7 @@ SqliteVector.NET v2.0 has been hardened against extreme adversarial conditions, 
 
 ### **Zero Per-Vector Allocation**
 
-Our core design philosophy is to completely avoid garbage collection during the search phase. The SIMD exact-scan hot path performs **zero managed allocations per scanned vector**. Query-level allocations are strictly bounded by Top-K result materialization and search orchestration.
+Our core design philosophy is to completely avoid garbage collection during the search phase. The SIMD exact-scan hot path performs **zero per-vector managed allocation**. Query-level allocations are strictly bounded by Top-K result materialization and search orchestration.
 
 | Method (10K Vectors) | Dimensions | Mean (Speed) | Effective Throughput | Allocated (GC) |
 |-----------------------|-----------:|-------------:|---------------------:|---------------:|
@@ -40,18 +40,18 @@ Our core design philosophy is to completely avoid garbage collection during the 
 | SingleThread Search   | 1536       | **2.92 ms**  | ~21.0 GB/s           | 13.3 KB (O(K)) |
 | MultiThread Search    | 1536       | **0.91 ms**  | ~67.5 GB/s           | 31.0 KB (O(K)) |
 
-*Tested on Intel Core Ultra 7 (AVX2/AVX-512) via BenchmarkDotNet. The GC allocations remain strictly flat `O(K)` regardless of whether you search 10,000 or 10,000,000 vectors. Effective throughput measures physical bytes scanned per second.*
+*Tested on Intel Core Ultra 7 (.NET 10 x64 RyuJIT TensorPrimitives) via BenchmarkDotNet. The GC allocations remain strictly flat `O(K)` regardless of whether you search 10,000 or 10,000,000 vectors. Effective throughput measures physical bytes scanned per second.*
 
 ### **Large-Scale Throughput (1 Million Vectors)**
 
-To prove that our `MemoryMappedSearchEngine` does not rely on CPU L3 cache illusions, we benchmarked the pure search engine directly against large datasets up to **~6 GB (1M x 1536 dim)**. The multi-threaded exact scan maintains an astonishing **~71.0 GB/s** effective scan throughput. 
+To prove that our `MemoryMappedSearchEngine` maintains performance on large datasets, we benchmarked the pure search engine directly against datasets up to **~6 GB (1M x 1536 dim)**. The multi-threaded exact scan maintains an astonishing **~71.0 GB/s** effective scan throughput. 
 
-Notice the stable scaling across dimensions (`D384: ~67.6 GB/s`, `D768: ~68.8 GB/s`, `D1536: ~71.0 GB/s`). This consistency is a strong indicator that the compute and runtime overhead (.NET JIT/SIMD) is sufficiently small, making the system memory bandwidth the dominant bottleneck.
+Notice the stable scaling across dimensions (`D384: ~67.6 GB/s`, `D768: ~68.8 GB/s`, `D1536: ~71.0 GB/s`). This consistency shows a pattern converging toward being memory-bandwidth-bound. As the dataset grows, the runtime compute overhead (.NET JIT/SIMD) becomes sufficiently small, shifting the primary bottleneck toward the system's memory delivery rate.
 
-Furthermore, we align our benchmark perfectly against the official workload of popular native vector engines (N=1M, D=768, K=20, Cosine). While traditional engines reading via SQLite row/page traversal often incur significant I/O overhead, our architecture decouples the vector data plane into a contiguous, memory-mapped file allowing direct SIMD scanning without SQLite intervention. On this specific workload, our C# engine achieves a staggering **41.57 ms** multi-threaded latency.
+Furthermore, we align our benchmark perfectly against the official workload of popular native vector engines (N=1M, D=768, K=20, Cosine). While traditional engines reading via SQLite row/page traversal incur row/BLOB materialization costs, our architecture removes SQLite from the hot path. By decoupling the vector data plane into a contiguous, memory-mapped `.vec` file, we enable direct SIMD scanning. On this specific workload, our C# engine achieves a staggering **41.57 ms** multi-threaded latency, aiming for native-class exact scan performance.
 
 **Benchmark Conditions:**
-- **Hardware:** Intel Core Ultra 7 (AVX2/AVX-512)
+- **Hardware:** Intel Core Ultra 7 (.NET 10 x64 RyuJIT TensorPrimitives)
 - **State:** Warm Cache, Memory-Mapped
 - **Top-K:** 10 (or 20 for 768-dim)
 - **Metric:** Cosine (Not Normalized)
@@ -148,7 +148,7 @@ SqliteVector.NET v2.0은 극한의 적대적 조건(Adversarial conditions), 스
 
 ### **벡터당 메모리 할당 제로 (Zero Per-Vector Allocation)**
 
-우리 엔진의 핵심 설계 철학은 검색 단계에서 가비지 컬렉터(GC)를 완전히 배제하는 것입니다. SIMD exact-scan 핫 패스(Hot-path) 구간에서는 **스캔되는 벡터당 관리되는 메모리 할당이 전혀 발생하지 않습니다 (Zero-Allocation)**. 쿼리 수준의 메모리 할당은 오직 Top-K 결과 객체 생성과 검색 오케스트레이션에만 엄격하게 국한됩니다.
+우리 엔진의 핵심 설계 철학은 검색 단계에서 가비지 컬렉터(GC)를 완전히 배제하는 것입니다. SIMD exact-scan 핫 패스(Hot-path) 구간에서는 **스캔되는 각 벡터마다 관리되는 메모리 할당이 전혀 발생하지 않습니다 (Zero per-vector managed allocation)**. 쿼리 수준의 메모리 할당은 오직 Top-K 결과 객체 생성과 검색 오케스트레이션에만 엄격하게 국한됩니다.
 
 | 검색 방식 (10K Vectors) | 차원 (Dims) | 평균 속도 (Mean) | 실효 대역폭 (Throughput)| 메모리 할당 (GC) |
 |-----------------------|-----------:|-------------:|----------------------:|---------------:|
@@ -157,18 +157,18 @@ SqliteVector.NET v2.0은 극한의 적대적 조건(Adversarial conditions), 스
 | 단일 스레드 검색 (Single)   | 1536       | **2.92 ms**  | ~21.0 GB/s            | 13.3 KB (O(K)) |
 | 다중 스레드 검색 (Multi)    | 1536       | **0.91 ms**  | ~67.5 GB/s            | 31.0 KB (O(K)) |
 
-*인텔 코어 Ultra 7 (AVX2/AVX-512) 환경에서 BenchmarkDotNet으로 측정되었습니다. GC 할당량은 검색 대상이 1만 개이든 1,000만 개이든 상관없이 오직 반환되는 Top-K 갯수에만 비례하여 `O(K)`로 고정 유지됩니다. 실효 대역폭은 초당 스캔된 물리적 바이트(Bytes)를 의미합니다.*
+*인텔 코어 Ultra 7 (.NET 10 x64 RyuJIT TensorPrimitives) 환경에서 BenchmarkDotNet으로 측정되었습니다. GC 할당량은 검색 대상이 1만 개이든 1,000만 개이든 상관없이 오직 반환되는 Top-K 갯수에만 비례하여 `O(K)`로 고정 유지됩니다. 실효 대역폭은 초당 스캔된 물리적 바이트(Bytes)를 의미합니다.*
 
 ### **대규모 스케일 대역폭 검증 (100만 개 벡터)**
 
 데이터셋이 CPU L3 캐시 크기를 초과할 때 발생하는 병목을 확인하기 위해, 순수 검색 엔진(`MemoryMappedSearchEngine`)을 최대 **약 6 GB (1M x 1536 dim)** 크기의 거대 데이터셋에 직접 구동했습니다. 측정 결과, 다중 스레드 스캔에서 **~71.0 GB/s**의 실효 스캔 대역폭(Effective scan throughput)을 그대로 유지해냈습니다. 
 
-차원 수가 증가함에 따라 유지되는 안정적인 확장성(`D384: ~67.6 GB/s`, `D768: ~68.8 GB/s`, `D1536: ~71.0 GB/s`)에 주목해 주세요. 이는 런타임 계산 오버헤드(.NET JIT/SIMD)가 충분히 작아져서 시스템 메모리 공급 속도가 지배적인 병목(Memory-bandwidth-bound)으로 작용하고 있다는 강력한 증거입니다.
+차원 수가 증가함에 따라 유지되는 안정적인 확장성(`D384: ~67.6 GB/s`, `D768: ~68.8 GB/s`, `D1536: ~71.0 GB/s`)에 주목해 주세요. 큰 데이터셋에서는 검색 런타임 계산 오버헤드(.NET JIT/SIMD)가 충분히 작아져서 시스템 메모리 공급 속도가 지배적인 병목(Memory-bandwidth-bound)으로 수렴하는 패턴을 보이고 있습니다.
 
-또한, 네이티브 벡터 엔진들의 공식 벤치마크 워크로드(N=1M, D=768, K=20, Cosine)와 동일한 조건으로 측정했습니다. SQLite의 행/페이지 순회를 거쳐 읽는 전통적인 방식은 막대한 I/O 오버헤드를 발생시키지만, 본 엔진은 벡터 데이터 플레인을 연속적인(contiguous) 메모리 맵(Memory-Mapped) 파일로 분리하여 SQLite의 개입 없이 직접 SIMD 스캔을 수행합니다. 이러한 데이터 플레인 아키텍처의 우위를 바탕으로, 해당 워크로드에서 다중 스레드 기준 **41.57 ms** 라는 쾌속 검색 속도를 기록했습니다.
+또한, 네이티브 벡터 엔진들의 공식 벤치마크 워크로드(N=1M, D=768, K=20, Cosine)와 동일한 조건으로 측정했습니다. 기존 엔진들처럼 검색 핫 패스(hot path)에서 SQLite의 행/BLOB 객체를 순회(materialization)하는 전통적인 방식은 막대한 비용을 발생시키지만, 본 엔진은 벡터 데이터 플레인을 연속적인(contiguous) 메모리 맵(Memory-Mapped) `.vec` 파일로 분리하여 SQLite를 핫 패스에서 제거하고 직접 SIMD 스캔을 수행합니다. 이러한 아키텍처를 바탕으로 해당 워크로드에서 다중 스레드 기준 **41.57 ms** 라는 쾌속 검색 속도를 기록하며, 네이티브급(Native-class) Exact Scan 성능을 목표로 하고 있습니다.
 
 **벤치마크 조건 (Benchmark Conditions):**
-- **하드웨어 (Hardware):** Intel Core Ultra 7 (AVX2/AVX-512)
+- **하드웨어 (Hardware):** Intel Core Ultra 7 (.NET 10 x64 RyuJIT TensorPrimitives)
 - **상태 (State):** Warm Cache, Memory-Mapped
 - **Top-K:** 10 (768차원 테스트의 경우 20)
 - **거리 측정 (Metric):** Cosine (Not Normalized)
